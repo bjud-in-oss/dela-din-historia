@@ -566,6 +566,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
       {editingItem && (
         <EditModal 
+          key={editingItem.id} // FORCE RE-MOUNT on item change
           item={editingItem} 
           accessToken={accessToken}
           onClose={() => setEditingItem(null)} 
@@ -769,13 +770,15 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings }: any) => {
                 
                 // If we already have a processed buffer in memory, use it directly!
                 if (item.processedBuffer) {
-                    sourceBlob = new Blob([item.processedBuffer]);
+                    const type = item.type === FileType.PDF ? 'application/pdf' : 'image/jpeg';
+                    sourceBlob = new Blob([item.processedBuffer], { type });
                 } else {
                     // Otherwise, fetch/process it now.
                     // Note: In a real "merge whole output" scenario, we'd fetch from that big file.
                     // Here, we simulate it by processing this specific file to match output specs.
                     const { buffer } = await processFileForCache(item, accessToken, settings.compressionLevel || 'medium');
-                    sourceBlob = new Blob([buffer]);
+                    const type = item.type === FileType.PDF ? 'application/pdf' : 'image/jpeg';
+                    sourceBlob = new Blob([buffer], { type });
                 }
                 
                 // Initialize PDF.js for rendering
@@ -820,10 +823,12 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings }: any) => {
                 // Use cached/processed buffer if available for speed
                 let sourceBlob: Blob;
                 if (item.processedBuffer) {
-                    sourceBlob = new Blob([item.processedBuffer]);
+                    const type = item.type === FileType.PDF ? 'application/pdf' : 'image/jpeg';
+                    sourceBlob = new Blob([item.processedBuffer], { type });
                 } else {
                      const { buffer } = await processFileForCache(item, accessToken, settings.compressionLevel || 'medium');
-                     sourceBlob = new Blob([buffer]);
+                     const type = item.type === FileType.PDF ? 'application/pdf' : 'image/jpeg';
+                     sourceBlob = new Blob([buffer], { type });
                 }
 
                 const url = await createPreviewWithOverlay(sourceBlob, item.type, pageMeta);

@@ -31,7 +31,8 @@ const compressImageBuffer = async (buffer: ArrayBuffer, level: CompressionLevel)
     }
 
     return new Promise((resolve, reject) => {
-        const blob = new Blob([buffer]);
+        // VIKTIGT: Ange type 'image/jpeg' här för att webbläsaren ska fatta att det är en bild
+        const blob = new Blob([buffer], { type: 'image/jpeg' });
         const url = URL.createObjectURL(blob);
         const img = new Image();
         
@@ -69,6 +70,7 @@ const compressImageBuffer = async (buffer: ArrayBuffer, level: CompressionLevel)
 
         img.onerror = () => {
             URL.revokeObjectURL(url);
+            // Fallback: Return original buffer if image load fails
             resolve(buffer); 
         };
 
@@ -256,8 +258,14 @@ export const renderPdfPageToCanvas = async (
         canvas.height = viewport.height;
         canvas.width = viewport.width;
 
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) return;
+
+        // Clear canvas to prevent artifacts or white overlays from previous renders
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
         const renderContext = {
-            canvasContext: canvas.getContext('2d', { willReadFrequently: true })!,
+            canvasContext: ctx,
             viewport: viewport,
         };
         
@@ -365,6 +373,11 @@ export const createPreviewWithOverlay = async (
         
         const scale = A4_WIDTH / imgWidth;
         const scaledHeight = imgHeight * scale;
+
+        // Safety check to avoid invalid PDF generation
+        if (!isFinite(scaledHeight) || scaledHeight <= 0) {
+            throw new Error("Invalid image dimensions");
+        }
 
         const page = pdfDoc.addPage([A4_WIDTH, scaledHeight]);
         page.drawImage(image, {
