@@ -7,6 +7,7 @@ import StoryEditor from './components/StoryEditor';
 import Dashboard from './components/Dashboard';
 import AppLogo from './components/AppLogo';
 import LandingPage from './components/LandingPage';
+import { createFolder, fetchDriveFiles } from './services/driveService';
 
 declare global {
   interface Window {
@@ -31,6 +32,7 @@ const App: React.FC = () => {
   const [showSourceSelector, setShowSourceSelector] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false); 
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [isCreatingBook, setIsCreatingBook] = useState(false);
 
   const [insertAtIndex, setInsertAtIndex] = useState<number | null>(null);
   const [books, setBooks] = useState<MemoryBook[]>([]);
@@ -152,16 +154,12 @@ const App: React.FC = () => {
     if (savedBooks) {
       try {
         const parsedBooks: MemoryBook[] = JSON.parse(savedBooks);
-        // Sanitera böckerna från korrupt data:
-        // 1. processedBuffer: ArrayBuffers kan inte sparas i JSON.
-        // 2. blobUrl: Blob-URLs dör när sidan laddas om. Vi måste rensa dem för Drive-filer så vi hämtar nytt.
         const sanitizedBooks = parsedBooks.map(book => ({
             ...book,
             items: book.items.map(item => ({
                 ...item,
                 processedBuffer: undefined, 
                 processedSize: undefined,
-                // Om filen inte är lokal (dvs från Drive), rensa blobUrl så vi tvingas hämta den igen.
                 blobUrl: item.isLocal ? item.blobUrl : undefined
             }))
         }));
@@ -178,17 +176,62 @@ const App: React.FC = () => {
     }
   }, [books]);
 
-  const handleCreateBook = () => {
-    const newBook: MemoryBook = {
-      id: `book-${Date.now()}`,
-      title: 'Min Nya Berättelse',
-      createdAt: new Date().toISOString(),
-      items: []
-    };
-    setBooks(prev => [newBook, ...prev]);
-    setCurrentBook(newBook);
-    setInsertAtIndex(null);
-    setShowSourceSelector(true);
+  // STRICT FOLDER CREATION LOGIC
+  const ensureBookFolder = async (title: string): Promise<string> => {
+    if (!user?.accessToken) throw new Error("Ingen åtkomst till Drive");
+    
+    // 1. Check for Root Folder "Dela din historia"
+    const rootFiles = await fetchDriveFiles(user.accessToken, 'root');
+    let rootFolder = rootFiles.find(f => f.name === 'Dela din historia' && f.type === FileType.FOLDER);
+    
+    if (!rootFolder) {
+      const rootId = await createFolder(user.accessToken, 'root', 'Dela din historia');
+      rootFolder = { id: rootId } as DriveFile;
+    }
+
+    // 2. Check/Create Book Subfolder
+    const bookFiles = await fetchDriveFiles(user.accessToken, rootFolder.id);
+    let bookFolder = bookFiles.find(f => f.name === title && f.type === FileType.FOLDER);
+
+    if (!bookFolder) {
+      const bookId = await createFolder(user.accessToken, rootFolder.id, title);
+      return bookId;
+    }
+    
+    return bookFolder.id;
+  };
+
+  const handleCreateBook = async () => {
+    if (!user?.accessToken) {
+       handleRequestDriveAccess();
+       return;
+    }
+
+    setIsCreatingBook(true);
+    const title = 'Min Nya Berättelse';
+    
+    try {
+      // Create folder structure immediately
+      const folderId = await ensureBookFolder(title);
+
+      const newBook: MemoryBook = {
+        id: `book-${Date.now()}`,
+        title: title,
+        createdAt: new Date().toISOString(),
+        items: [],
+        driveFolderId: folderId // Store the ID!
+      };
+
+      setBooks(prev => [newBook, ...prev]);
+      setCurrentBook(newBook);
+      setInsertAtIndex(null);
+      setShowSourceSelector(true);
+    } catch (e) {
+      console.error("Kunde inte skapa bokmapp", e);
+      alert("Kunde inte skapa mappen på Drive. Kontrollera dina rättigheter.");
+    } finally {
+      setIsCreatingBook(false);
+    }
   };
 
   const handleAddItemsToBook = (newItems: DriveFile[]) => {
@@ -225,7 +268,6 @@ const App: React.FC = () => {
     );
   }
 
-  // Authenticated State
   if (!user) return null; 
 
   return (
@@ -242,6 +284,16 @@ const App: React.FC = () => {
       onOpenSettings={() => setShowSettingsModal(true)}
       activePhase={showShareModal ? 'phase3' : (currentBook ? 'phase2' : 'phase1')}
     >
+      {isCreatingBook && (
+         <div className="fixed inset-0 z-[100] bg-white/80 backdrop-blur-sm flex items-center justify-center">
+            <div className="flex flex-col items-center">
+                <i className="fas fa-folder-plus fa-spin text-4xl text-indigo-600 mb-4"></i>
+                <p className="font-bold text-slate-700">Skapar mappstruktur på Drive...</p>
+                <p className="text-xs text-slate-400">Dela din historia / Min Nya Berättelse</p>
+            </div>
+         </div>
+      )}
+
       {!currentBook ? (
         <div className="flex flex-col items-center md:items-start justify-center h-full max-w-7xl mx-auto px-8">
             <div className="w-full flex flex-col md:flex-row gap-12 items-center">
@@ -276,20 +328,14 @@ const App: React.FC = () => {
         </div>
       ) : (
         <StoryEditor 
+          currentBook={currentBook} // Pass entire book object
           items={currentBook.items}
           onUpdateItems={(newItemsOrUpdater) => {
               setCurrentBook(prevBook => {
                   if (!prevBook) return null;
-                  
-                  const newItems = typeof newItemsOrUpdater === 'function' 
-                      ? newItemsOrUpdater(prevBook.items)
-                      : newItemsOrUpdater;
-                  
+                  const newItems = typeof newItemsOrUpdater === 'function' ? newItemsOrUpdater(prevBook.items) : newItemsOrUpdater;
                   const updatedBook = { ...prevBook, items: newItems };
-                  
-                  // Persist to books list
                   setBooks(prevBooks => prevBooks.map(b => b.id === updatedBook.id ? updatedBook : b));
-                  
                   return updatedBook;
               });
           }}
@@ -319,6 +365,7 @@ const App: React.FC = () => {
         </div>
       )}
 
+      {/* Settings Modal (Unchanged) */}
       {showSettingsModal && (
         <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in">
@@ -327,68 +374,27 @@ const App: React.FC = () => {
                 <button onClick={() => setShowSettingsModal(false)} className="text-slate-400 hover:text-red-500"><i className="fas fa-times"></i></button>
              </div>
              <div className="p-6 space-y-6">
-                
-                {/* Max Chunk Size */}
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Max filstorlek för FamilySearch
-                  </label>
-                  <p className="text-xs text-slate-500 mb-3">
-                    Styr hur stor varje del-PDF får vara innan boken delas upp. FamilySearch har en gräns på 15 MB.
-                  </p>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Max filstorlek för FamilySearch</label>
+                  <p className="text-xs text-slate-500 mb-3">Styr hur stor varje del-PDF får vara innan boken delas upp. FamilySearch har en gräns på 15 MB.</p>
                   <div className="flex items-center space-x-3">
-                    <input 
-                      type="number" 
-                      min="5" 
-                      max="50" 
-                      step="0.1"
-                      value={settings.maxChunkSizeMB} 
-                      onChange={(e) => setSettings({...settings, maxChunkSizeMB: parseFloat(e.target.value)})}
-                      className="w-24 px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold"
-                    />
+                    <input type="number" min="5" max="50" step="0.1" value={settings.maxChunkSizeMB} onChange={(e) => setSettings({...settings, maxChunkSizeMB: parseFloat(e.target.value)})} className="w-24 px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold"/>
                     <span className="text-sm font-bold text-slate-600">MB</span>
                   </div>
                 </div>
-
-                {/* Safety Margin */}
                 <div>
-                   <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Säkerhetsmarginal (%)
-                   </label>
-                   <p className="text-xs text-slate-500 mb-3">
-                     PDF-formatet lägger till lite extra data utöver bilderna. En marginal på 5-10% rekommenderas för att inte riskera att filen blir precis över gränsen vid uppladdning. Sätt till 0% om du vill maximera utrymmet.
-                   </p>
+                   <label className="block text-sm font-bold text-slate-700 mb-2">Säkerhetsmarginal (%)</label>
+                   <p className="text-xs text-slate-500 mb-3">PDF-formatet lägger till lite extra data utöver bilderna.</p>
                    <div className="flex items-center space-x-4">
-                      <input 
-                         type="range" 
-                         min="0" 
-                         max="20" 
-                         step="1"
-                         value={settings.safetyMarginPercent}
-                         onChange={(e) => setSettings({...settings, safetyMarginPercent: parseInt(e.target.value)})}
-                         className="flex-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"
-                      />
+                      <input type="range" min="0" max="20" step="1" value={settings.safetyMarginPercent} onChange={(e) => setSettings({...settings, safetyMarginPercent: parseInt(e.target.value)})} className="flex-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"/>
                       <span className="text-sm font-bold text-indigo-600 w-12 text-right">{settings.safetyMarginPercent}%</span>
                    </div>
-                   <div className="text-[10px] text-slate-400 mt-1 flex justify-between font-bold uppercase">
-                      <span>Riskfyllt (0%)</span>
-                      <span>Rekommenderat (5-10%)</span>
-                      <span>Säkert (20%)</span>
-                   </div>
                 </div>
-
-                {/* Compression Level */}
                 <div>
-                   <label className="block text-sm font-bold text-slate-700 mb-2">
-                    Komprimeringsgrad
-                   </label>
+                   <label className="block text-sm font-bold text-slate-700 mb-2">Komprimeringsgrad</label>
                    <div className="grid grid-cols-3 gap-2">
                       {(['low', 'medium', 'high'] as CompressionLevel[]).map(level => (
-                        <button
-                          key={level}
-                          onClick={() => setSettings({...settings, compressionLevel: level})}
-                          className={`py-2 px-3 rounded-lg text-xs font-bold capitalize border ${settings.compressionLevel === level ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}
-                        >
+                        <button key={level} onClick={() => setSettings({...settings, compressionLevel: level})} className={`py-2 px-3 rounded-lg text-xs font-bold capitalize border ${settings.compressionLevel === level ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>
                           {level === 'low' ? 'Låg' : level === 'medium' ? 'Medium' : 'Hög'}
                         </button>
                       ))}

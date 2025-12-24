@@ -70,6 +70,7 @@ export interface MemoryBook {
   createdAt: string;
   items: DriveFile[];
   coverImageId?: string;
+  driveFolderId?: string; // ID till mappen i Google Drive där boken bor
 }
 
 export interface AppSettings {
