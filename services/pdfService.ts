@@ -374,7 +374,7 @@ export const createPreviewWithOverlay = async (fileBlob: Blob, fileType: FileTyp
     });
 
     const pdfBytes = await pdfDoc.save();
-    return URL.createObjectURL(new Blob([pdfBytes], { type: 'application/pdf' }));
+    return URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' }));
 };
 
 export const mergeFilesToPdf = async (files: DriveFile[], accessToken: string, compression: CompressionLevel = 'medium'): Promise<Blob> => {
@@ -436,7 +436,7 @@ export const mergeFilesToPdf = async (files: DriveFile[], accessToken: string, c
         }
     }
     const pdfBytes = await mergedPdf.save();
-    return new Blob([pdfBytes], { type: 'application/pdf' });
+    return new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
 };
 
 export const generateCombinedPDF = async (
