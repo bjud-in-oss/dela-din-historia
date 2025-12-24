@@ -90,9 +90,26 @@ export const processFileForCache = async (
         return { buffer: file.processedBuffer, size: file.processedSize || file.processedBuffer.byteLength };
     }
 
+    // Attempt to load content. 
+    // Prioritize existing blobUrl but allow fallback if it is dead.
     if (file.blobUrl) {
-        const res = await fetch(file.blobUrl);
-        rawBuffer = await res.arrayBuffer();
+        try {
+            const res = await fetch(file.blobUrl);
+            if (!res.ok) throw new Error("Blob dead or invalid");
+            rawBuffer = await res.arrayBuffer();
+        } catch (e) {
+            // If blobUrl fails and it is a Google Drive file, try fetching via API
+            if (!file.isLocal) {
+                 console.warn(`Blob URL for ${file.name} is dead. Refetching from Drive API...`);
+                 const blob = await fetchFileBlob(accessToken, file.id, file.type === FileType.GOOGLE_DOC);
+                 rawBuffer = await blob.arrayBuffer();
+            } else {
+                // If it's a local file and blob is dead, we can't recover it without user action.
+                // Re-throw or return empty to avoid crashes (though result will be white)
+                console.error("Local file blob is dead and cannot be recovered:", file.name);
+                throw e; 
+            }
+        }
     } else {
         const blob = await fetchFileBlob(accessToken, file.id, file.type === FileType.GOOGLE_DOC);
         rawBuffer = await blob.arrayBuffer();

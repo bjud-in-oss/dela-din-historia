@@ -152,13 +152,17 @@ const App: React.FC = () => {
     if (savedBooks) {
       try {
         const parsedBooks: MemoryBook[] = JSON.parse(savedBooks);
-        // Sanitera böckerna från korrupta ArrayBuffers (processedBuffer) som inte överlever JSON-serialisering
+        // Sanitera böckerna från korrupt data:
+        // 1. processedBuffer: ArrayBuffers kan inte sparas i JSON.
+        // 2. blobUrl: Blob-URLs dör när sidan laddas om. Vi måste rensa dem för Drive-filer så vi hämtar nytt.
         const sanitizedBooks = parsedBooks.map(book => ({
             ...book,
             items: book.items.map(item => ({
                 ...item,
-                processedBuffer: undefined, // Rensa denna då den inte kan sparas/laddas korrekt
-                processedSize: undefined
+                processedBuffer: undefined, 
+                processedSize: undefined,
+                // Om filen inte är lokal (dvs från Drive), rensa blobUrl så vi tvingas hämta den igen.
+                blobUrl: item.isLocal ? item.blobUrl : undefined
             }))
         }));
         setBooks(sanitizedBooks);
@@ -170,8 +174,6 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (books.length > 0) {
-      // Vi sparar böckerna men processedBuffer kommer inte sparas korrekt (vilket är förväntat)
-      // Nästa gång vi laddar rensar vi upp det i useEffect ovan.
       localStorage.setItem('memory_books', JSON.stringify(books));
     }
   }, [books]);
