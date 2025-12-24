@@ -151,7 +151,17 @@ const App: React.FC = () => {
     const savedBooks = localStorage.getItem('memory_books');
     if (savedBooks) {
       try {
-        setBooks(JSON.parse(savedBooks));
+        const parsedBooks: MemoryBook[] = JSON.parse(savedBooks);
+        // Sanitera böckerna från korrupta ArrayBuffers (processedBuffer) som inte överlever JSON-serialisering
+        const sanitizedBooks = parsedBooks.map(book => ({
+            ...book,
+            items: book.items.map(item => ({
+                ...item,
+                processedBuffer: undefined, // Rensa denna då den inte kan sparas/laddas korrekt
+                processedSize: undefined
+            }))
+        }));
+        setBooks(sanitizedBooks);
       } catch (e) {
         console.error("Failed to load books", e);
       }
@@ -160,6 +170,8 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (books.length > 0) {
+      // Vi sparar böckerna men processedBuffer kommer inte sparas korrekt (vilket är förväntat)
+      // Nästa gång vi laddar rensar vi upp det i useEffect ovan.
       localStorage.setItem('memory_books', JSON.stringify(books));
     }
   }, [books]);
