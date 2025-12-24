@@ -1,0 +1,60 @@
+Här är den modulariserade informationen om delningsalternativen på FamilySearch och AI-verktyg. Denna text ska användas som referens för UI-texter för att säkerställa att ingen information förenklas bort.
+
+# DELA PRIVAT (FAMILJ & SLÄKT)
+
+## Alternativ 1: Privata Stories
+*   **Tjänst:** Stories - spara privata bilder och texter via guider
+*   **Målgrupp:** Familjeanpassat för barn och unga i släktgrupper.
+*   **App:** Together av FamilySearch
+*   **Format:** Text och bild
+*   **Plattform:** Webb, Android & iOS
+*   **Länk:** https://www.familysearch.org/en/discovery/together/stories
+*   **Synlighet:** Begränsas som förval till släktgrupper.
+*   **Persistens:** Bevaras för alltid av FamilySearch men faller ej i glömska om barn och unga delar nutidshistoria och blir gruppadministratörer.
+
+## Alternativ 2: Privata Minnen (Levande)
+*   **Tjänst:** Personliga minnen om levande - spara privata källdokument
+*   **Målgrupp:** Familj och släkt i släktgrupper
+*   **App:** FamilySearch (Family Tree)
+*   **Format:** PDF, Ljud, Text, Bild, mm
+*   **Plattform:** Webb, Android & iOS
+*   **Länk:** https://www.familysearch.org/en/tree/private-people
+*   **Synlighet:** Man får ett tydligt val mellan offentlig eller privat delning i släktgrupper.
+*   **Persistens:** Bevaras för alltid av FamilySearch men faller ej i glömska om nästa generation blir aktiva gruppadministratörer eller medlemmar i släktgruppen manuellt flyttar dokumenten till det publika trädet efter din bortgång.
+
+# DELA OFFENTLIGT (SYNLIGT FÖR ALLA)
+
+## Alternativ 3: Offentlig Feed
+*   **Tjänst:** Feed - spara bild och text om släkten i ett flöde
+*   **Målgrupp:** Familj och släkt.
+*   **App:** Together av FamilySearch
+*   **Format:** Text och bild
+*   **Plattform:** Webb, Android & iOS
+*   **Länk:** https://www.familysearch.org/en/discovery/together/feed
+*   **Synlighet:** Bilder begränsas som förval till offentliga. Text kan begränsas både privat och offentligt. Tips: Dela alltid offentligt för att slippa komma ihåg vad som sparas privat eller offentligt.
+*   **Persistens:** Bevaras för alltid av FamilySearch men faller ej i glömska om det taggas till ett offentligt släktträd eller delas med privata släktgrupper med unga administratörer.
+
+## Alternativ 4: Offentlig Gallery
+*   **Tjänst:** Memories Gallery
+*   **Målgrupp:** Släktforskare och allmänhet
+*   **App:** Memories av FamilySearch
+*   **Format:** Bild, ljud, text och PDF
+*   **Plattform:** Webb, Android & iOS
+*   **Länk:** https://www.familysearch.org/en/memories/gallery
+*   **Notering:** Använder samma delningsguide som i personliga minnen men med fokus på det offentliga galleriet.
+
+# AI-VERKTYG: FÖRFINA BERÄTTELSEN
+
+## NotebookLM
+På NotebookLM kan man skapa berättelser genom följande process:
+1.  **"Skapa anteckningsbok"**
+2.  **"Lägga till källor"** (Din PDF)
+3.  Låt sedan NotebookLM skapa ljudfiler och dokument åt dig i **"Studio"**.
+4.  Granska och ladda ned.
+
+**Tips:** Om berättelserna inte blev bra, skriv då mer information om det du saknar i källorna (i din bok) och skapa om dokumenten igen med hjälp av ett bättre kontext. Tjänsten är gratis och förutsätter att du har ett Google-konto.
+
+----------------------------------------------------------------
+
+Teknisk referens (15 MB gräns):
+Appen hanterar automatiskt FamilySearchs 15 MB-gräns genom att dela upp PDF-filer i "chunks" (delar) om ca 14 MB. Export sker via Blob-generering i webbläsaren.

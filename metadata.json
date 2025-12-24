@@ -1,0 +1,7 @@
+{
+  "name": "Copy preview-history.netlify.app of dela-din-historia.netlify.app 24 dec 2025",
+  "description": "Ett verktyg för att bevara och dela släktminnen för framtida generationer. Samla dokument och bilder från Google Drive till vackra arkiv optimerade för FamilySearch.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
