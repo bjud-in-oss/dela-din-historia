@@ -584,6 +584,8 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
   
   // Display real size if calculated
   const displaySizeMB = item.processedSize ? (item.processedSize / (1024*1024)).toFixed(2) : ((item.size || 0) / (1024*1024)).toFixed(2);
+  const isEdited = item.pageMeta && Object.keys(item.pageMeta).length > 0;
+  const isCached = !!item.processedBuffer;
 
   return (
     <div 
@@ -606,6 +608,7 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
                 ) : (
                     <img src={item.blobUrl} className="w-full h-full object-cover" />
                 )}
+                {/* Transparent overlay to allow dragging/clicking instead of iframe interaction */}
                 <div className="absolute inset-0 bg-transparent z-10"></div>
              </div>
           ) : item.type === FileType.IMAGE && item.thumbnail ? (
@@ -617,43 +620,52 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
              </div>
           )}
           
-          {item.pageMeta && Object.keys(item.pageMeta).length > 0 && <div className="absolute top-0 right-0 bg-indigo-600 text-white px-2 py-0.5 text-[9px] font-bold uppercase rounded-bl-lg shadow-sm z-20">Redigerad</div>}
-          
-          {/* VISUAL INDICATOR FOR CACHED STATE */}
-          {item.processedBuffer && (
-             <div className="absolute top-0 left-10 bg-emerald-500 text-white px-2 py-0.5 text-[8px] font-bold uppercase rounded-b shadow-sm z-20" title="Denna fil är cache-lagrad och redo för export">
-                 <i className="fas fa-bolt"></i>
-             </div>
-          )}
-          
-          <div className={`absolute top-2 left-2 px-2 py-1 ${chunkColor} text-white rounded-md flex items-center justify-center text-[10px] font-bold shadow-sm z-30`}>
-             <span className="opacity-75 mr-1 text-[9px]">Del {(chunkInfo?.chunkIndex || 0) + 1}</span>
-             <span>#{index + 1}</span>
+          {/* Top Left: Part Badge & Warnings */}
+          <div className="absolute top-2 left-2 flex flex-col gap-1 items-start z-20 pointer-events-none">
+              <div className={`px-2 py-1 ${chunkColor} text-white rounded-md flex items-center justify-center text-[10px] font-bold shadow-sm`}>
+                 <span className="opacity-75 mr-1 text-[9px]">Del {(chunkInfo?.chunkIndex || 0) + 1}</span>
+                 <span>#{index + 1}</span>
+              </div>
+              
+              {chunkInfo?.isTooLarge && (
+                  <div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center shadow-lg animate-pulse" title="Filen är större än 15MB och kan vara för stor för FamilySearch">
+                      <i className="fas fa-exclamation text-white text-[10px]"></i>
+                  </div>
+              )}
           </div>
 
-          <div className="absolute bottom-1 right-1 bg-black/60 text-white px-1.5 py-0.5 rounded text-[8px] font-mono z-20">
-              {displaySizeMB} MB
+          {/* Top Right: Actions (Absolute topmost z-index for clicking) */}
+          <div className={`absolute top-2 right-2 flex flex-col gap-2 transition-opacity z-30 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+              <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="w-8 h-8 bg-indigo-600 text-white rounded-full shadow-md flex items-center justify-center hover:bg-indigo-700" title="Redigera"><i className="fas fa-pen text-xs"></i></button>
+              {showSplit && (
+                <button onClick={(e) => { e.stopPropagation(); onSplit(); }} className="w-8 h-8 bg-white rounded-full text-slate-400 hover:text-indigo-600 shadow-md flex items-center justify-center" title="Dela upp"><i className="fas fa-layer-group text-xs"></i></button>
+              )}
+               <button onClick={(e) => { e.stopPropagation(); onRemove(); }} className="w-8 h-8 bg-white rounded-full text-slate-400 hover:text-red-500 shadow-md flex items-center justify-center" title="Ta bort"><i className="fas fa-trash-alt text-xs"></i></button>
           </div>
 
-          {chunkInfo?.isTooLarge && (
-              <div className="absolute top-10 left-2 w-6 h-6 bg-red-500 rounded-full flex items-center justify-center shadow-lg animate-pulse z-30" title="Filen är större än 15MB och kan vara för stor för FamilySearch">
-                  <i className="fas fa-exclamation text-white text-[10px]"></i>
-              </div>
-          )}
-          
-          {item.type === FileType.PDF && item.pageCount && item.pageCount > 1 && (
-              <div className="absolute bottom-2 right-2 px-2 py-0.5 bg-slate-800/80 backdrop-blur text-white rounded text-[9px] font-bold shadow-sm z-30">
-                  {item.pageCount} sidor
-              </div>
-          )}
+          {/* Bottom Bar: Status Indicators */}
+          <div className="absolute bottom-0 left-0 right-0 p-1.5 flex justify-between items-end bg-gradient-to-t from-black/60 to-transparent z-20 pointer-events-none">
+                <div className="flex gap-1">
+                     <span className="bg-black/40 backdrop-blur-sm text-white px-1.5 py-0.5 rounded text-[8px] font-mono border border-white/10">{displaySizeMB} MB</span>
+                     {isCached && (
+                         <span className="bg-emerald-500/90 text-white px-1.5 py-0.5 text-[8px] font-bold rounded shadow-sm flex items-center" title="Optimerad">
+                             <i className="fas fa-bolt"></i>
+                         </span>
+                     )}
+                </div>
+                <div className="flex gap-1">
+                     {isEdited && (
+                        <span className="bg-indigo-600/90 text-white px-1.5 py-0.5 text-[8px] font-bold uppercase rounded shadow-sm">Redigerad</span>
+                     )}
+                     {item.type === FileType.PDF && item.pageCount && item.pageCount > 1 && (
+                        <span className="bg-slate-800/80 backdrop-blur text-white px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm">
+                            {item.pageCount} sid
+                        </span>
+                     )}
+                </div>
+          </div>
        </div>
-       <div className={`absolute top-2 right-2 flex flex-col gap-2 transition-opacity z-30 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-          <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="w-8 h-8 bg-indigo-600 text-white rounded-full shadow-md flex items-center justify-center hover:bg-indigo-700" title="Redigera"><i className="fas fa-pen text-xs"></i></button>
-          {showSplit && (
-            <button onClick={(e) => { e.stopPropagation(); onSplit(); }} className="w-8 h-8 bg-white rounded-full text-slate-400 hover:text-indigo-600 shadow-md flex items-center justify-center" title="Dela upp"><i className="fas fa-layer-group text-xs"></i></button>
-          )}
-           <button onClick={(e) => { e.stopPropagation(); onRemove(); }} className="w-8 h-8 bg-white rounded-full text-slate-400 hover:text-red-500 shadow-md flex items-center justify-center" title="Ta bort"><i className="fas fa-trash-alt text-xs"></i></button>
-       </div>
+       
        <div className="absolute bottom-0 left-0 right-0 h-20 px-3 py-2 bg-white">
           <p className="text-[10px] font-bold text-slate-400 uppercase truncate mb-1">{item.name}</p>
           <div className="text-[9px] leading-tight text-slate-600 line-clamp-3 font-serif italic opacity-80">{item.description || "Ingen beskrivning..."}</div>
