@@ -11,7 +11,12 @@ const A4_WIDTH = 595.28;
 const PDF_OVERHEAD_BASE = 15000; 
 const PDF_OVERHEAD_PER_PAGE = 4000;
 
-// --- COMPRESSION HELPERS ---
+// --- UTILS ---
+
+// Fix for TypeScript Blob errors in build environment
+const createBlob = (data: ArrayBuffer | Uint8Array, type: string): Blob => {
+    return new Blob([data as any], { type });
+};
 
 const compressImageBuffer = async (buffer: ArrayBuffer, level: CompressionLevel): Promise<ArrayBuffer> => {
     let quality = 0.9;
@@ -26,95 +31,105 @@ const compressImageBuffer = async (buffer: ArrayBuffer, level: CompressionLevel)
     }
 
     return new Promise((resolve) => {
-        const blob = new Blob([buffer], { type: 'image/jpeg' });
-        const url = URL.createObjectURL(blob);
-        const img = new Image();
-        
-        img.onload = () => {
-            URL.revokeObjectURL(url);
-            let width = img.width;
-            let height = img.height;
-
-            if (width > maxWidth) {
-                const scaleFactor = maxWidth / width;
-                width = maxWidth;
-                height = height * scaleFactor;
-            }
-
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
+        try {
+            const blob = createBlob(buffer, 'image/jpeg');
+            const url = URL.createObjectURL(blob);
+            const img = new Image();
             
-            if (!ctx) {
-                resolve(buffer); 
-                return;
-            }
+            img.onload = () => {
+                URL.revokeObjectURL(url);
+                let width = img.width;
+                let height = img.height;
 
-            ctx.drawImage(img, 0, 0, width, height);
-
-            canvas.toBlob((newBlob) => {
-                if (newBlob) {
-                    newBlob.arrayBuffer().then(resolve).catch(() => resolve(buffer));
-                } else {
-                    resolve(buffer);
+                if (width > maxWidth) {
+                    const scaleFactor = maxWidth / width;
+                    width = maxWidth;
+                    height = height * scaleFactor;
                 }
-            }, 'image/jpeg', quality);
-        };
 
-        img.onerror = () => {
-            URL.revokeObjectURL(url);
-            resolve(buffer); 
-        };
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                
+                if (!ctx) {
+                    resolve(buffer); 
+                    return;
+                }
 
-        img.src = url;
+                ctx.drawImage(img, 0, 0, width, height);
+
+                canvas.toBlob((newBlob) => {
+                    if (newBlob) {
+                        newBlob.arrayBuffer().then(resolve).catch(() => resolve(buffer));
+                    } else {
+                        resolve(buffer);
+                    }
+                }, 'image/jpeg', quality);
+            };
+
+            img.onerror = () => {
+                console.warn("Image compression failed (load error), using original.");
+                URL.revokeObjectURL(url);
+                resolve(buffer); 
+            };
+
+            img.src = url;
+        } catch (e) {
+            console.warn("Image compression crashed, using original.", e);
+            resolve(buffer);
+        }
     });
 };
 
-// --- PROCESS FILE (Unified Process with Robust Fallback) ---
+// --- PROCESS FILE ---
+
 export const processFileForCache = async (
     file: DriveFile, 
     accessToken: string, 
     level: CompressionLevel
 ): Promise<{ buffer: ArrayBuffer, size: number }> => {
     
-    // 1. If we already have a processed buffer in memory, use it.
+    // 1. Check Cache
     if (file.processedBuffer && file.compressionLevelUsed === level) {
         return { buffer: file.processedBuffer, size: file.processedSize || file.processedBuffer.byteLength };
     }
 
     let rawBuffer: ArrayBuffer;
 
-    // 2. Try fetching the file content
+    // 2. Fetch Content
     try {
-        if (file.blobUrl) {
-            const res = await fetch(file.blobUrl);
-            if (!res.ok) {
-                throw new Error("Blob expired"); // This triggers the catch block
-            }
-            rawBuffer = await res.arrayBuffer();
-        } else {
-            throw new Error("No blob URL");
+        // Fallback strategy: Try Blob URL first, then Drive API
+        let fetchSuccess = false;
+        
+        if (file.blobUrl && file.isLocal) {
+            try {
+                const res = await fetch(file.blobUrl);
+                if (res.ok) {
+                    rawBuffer = await res.arrayBuffer();
+                    fetchSuccess = true;
+                }
+            } catch (e) { console.warn(`Blob URL failed for ${file.name}, trying API fallback...`); }
         }
-    } catch (e) {
-        // 3. Fallback: If Blob URL failed/expired, and it's a drive file, fetch from API.
-        if (!file.isLocal && accessToken) {
-             console.log(`Refreshing expired blob for ${file.name} from Drive API`);
-             const blob = await fetchFileBlob(accessToken, file.id, file.type === FileType.GOOGLE_DOC);
-             rawBuffer = await blob.arrayBuffer();
-        } else {
-            // If it's a local file and blob is dead, we are stuck.
-            console.error("Local file missing/expired:", file.name);
-            throw new Error("Local file missing"); 
+
+        if (!fetchSuccess) {
+            if (!accessToken) throw new Error("Ingen behörighet (AccessToken saknas)");
+            const blob = await fetchFileBlob(accessToken, file.id, file.type === FileType.GOOGLE_DOC);
+            rawBuffer = await blob.arrayBuffer();
         }
+        
+    } catch (e: any) {
+        console.error(`Failed to process ${file.name}:`, e);
+        throw new Error(`Kunde inte ladda: ${e.message}`);
     }
 
+    // 3. Compress if Image
     if (file.type === FileType.IMAGE) {
-        const compressed = await compressImageBuffer(rawBuffer, level);
+        const compressed = await compressImageBuffer(rawBuffer!, level);
         return { buffer: compressed, size: compressed.byteLength };
     }
 
-    return { buffer: rawBuffer, size: rawBuffer.byteLength };
+    return { buffer: rawBuffer!, size: rawBuffer!.byteLength };
 };
 
 // --- CHUNKING ---
@@ -267,7 +282,7 @@ export const splitPdfIntoPages = async (pdfBlob: Blob, filenameBase: string): Pr
     const [copiedPage] = await newPdf.copyPages(sourcePdf, [i]);
     newPdf.addPage(copiedPage);
     const pdfBytes = await newPdf.save();
-    const blob = new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
+    const blob = createBlob(pdfBytes, 'application/pdf');
     resultFiles.push({
       id: `split-${Date.now()}-${i}`,
       name: `${filenameBase} (Sida ${i + 1})`,
@@ -334,7 +349,10 @@ export const createPreviewWithOverlay = async (fileBlob: Blob, fileType: FileTyp
         const buffer = await fileBlob.arrayBuffer();
         if (fileType === FileType.IMAGE) {
             let image;
-            try { image = await pdfDoc.embedJpg(buffer); } catch { image = await pdfDoc.embedPng(buffer); }
+            try { image = await pdfDoc.embedJpg(buffer); } catch { 
+                 try { image = await pdfDoc.embedPng(buffer); }
+                 catch { throw new Error("Bildformatet stöds ej (ej JPG/PNG)"); }
+            }
             const imgWidth = image.width || A4_WIDTH;
             const imgHeight = image.height || (A4_WIDTH * 1.414);
             const scale = A4_WIDTH / imgWidth;
@@ -353,10 +371,18 @@ export const createPreviewWithOverlay = async (fileBlob: Blob, fileType: FileTyp
                 page.drawPage(ep, { x: 0, y: 0, width: A4_WIDTH, height: scaledHeight });
             });
         }
-    } catch (e) {
+    } catch (e: any) {
         // ERROR PAGE - VISIBLE FALLBACK
+        console.error("Preview Generation Error:", e);
         const page = pdfDoc.addPage([A4_WIDTH, A4_WIDTH * 1.414]);
-        page.drawText("Fel vid inläsning av fil.", { x: 50, y: 700, size: 20, color: rgb(0.8, 0, 0) });
+        
+        page.drawRectangle({
+            x: 50, y: 600, width: A4_WIDTH - 100, height: 100,
+            color: rgb(0.95, 0.95, 0.95), borderColor: rgb(0.8, 0.2, 0.2), borderWidth: 1
+        });
+        
+        page.drawText("Kunde inte visa filen.", { x: 70, y: 660, size: 18, font: fontBold, color: rgb(0.8, 0, 0) });
+        page.drawText(`Fel: ${e.message || "Okänt fel"}`, { x: 70, y: 630, size: 10, font: fontRegular, color: rgb(0.3, 0.3, 0.3) });
     }
 
     // Apply Meta
@@ -374,7 +400,7 @@ export const createPreviewWithOverlay = async (fileBlob: Blob, fileType: FileTyp
     });
 
     const pdfBytes = await pdfDoc.save();
-    return URL.createObjectURL(new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' }));
+    return URL.createObjectURL(createBlob(pdfBytes, 'application/pdf'));
 };
 
 export const mergeFilesToPdf = async (files: DriveFile[], accessToken: string, compression: CompressionLevel = 'medium'): Promise<Blob> => {
@@ -386,13 +412,20 @@ export const mergeFilesToPdf = async (files: DriveFile[], accessToken: string, c
     const fonts = { regular: fontRegular, bold: fontBold, italic: fontItalic, boldItalic: fontBoldItalic };
 
     for (const item of files) {
+        let buffer: ArrayBuffer | null = null;
         try {
-            const { buffer } = await processFileForCache(item, accessToken, compression);
+            // FORCE RE-FETCH if process cache is missing. Do not rely on old data.
+            const result = await processFileForCache(item, accessToken, compression);
+            buffer = result.buffer;
+
             let startPageIndex = mergedPdf.getPageCount();
 
             if (item.type === FileType.IMAGE) {
                 let image;
-                try { image = await mergedPdf.embedJpg(buffer); } catch { image = await mergedPdf.embedPng(buffer); }
+                try { image = await mergedPdf.embedJpg(buffer); } catch { 
+                    try { image = await mergedPdf.embedPng(buffer); }
+                    catch (e) { throw new Error("Kunde inte avkoda bild (varken JPG eller PNG)."); }
+                }
                 const scale = A4_WIDTH / image.width;
                 const scaledHeight = image.height * scale;
                 const page = mergedPdf.addPage([A4_WIDTH, scaledHeight]);
@@ -429,14 +462,15 @@ export const mergeFilesToPdf = async (files: DriveFile[], accessToken: string, c
                  drawRichLines(p, hLines, fonts, 'top');
                  drawRichLines(p, fLines, fonts, 'bottom');
             }
-        } catch (e) {
+        } catch (e: any) {
             console.error(`Merge failed for ${item.name}`, e);
             const page = mergedPdf.addPage([A4_WIDTH, A4_WIDTH]);
-            page.drawText(`Fel vid generering: ${item.name}`, { x: 50, y: 700, size: 12, font: fontRegular });
+            page.drawText(`Kunde inte inkludera: ${item.name}`, { x: 50, y: 750, size: 14, font: fontBold, color: rgb(0.8, 0, 0) });
+            page.drawText(`Felorsak: ${e.message}`, { x: 50, y: 720, size: 10, font: fontRegular });
         }
     }
     const pdfBytes = await mergedPdf.save();
-    return new Blob([pdfBytes as unknown as BlobPart], { type: 'application/pdf' });
+    return createBlob(pdfBytes, 'application/pdf');
 };
 
 export const generateCombinedPDF = async (
@@ -448,6 +482,5 @@ export const generateCombinedPDF = async (
 ): Promise<Uint8Array> => {
   const contentBlob = await mergeFilesToPdf(items, accessToken, compression);
   const contentBuffer = await contentBlob.arrayBuffer();
-  // Simply return the merged PDF buffer
   return new Uint8Array(contentBuffer);
 };
