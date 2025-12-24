@@ -65,7 +65,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ googleBtnRef, isGoogleReady, 
                        <AppLogo variant="phase3" className="w-20 h-20" />
                    </div>
                    <div>
-                       <h3 className="font-bold text-slate-900 text-lg">3. Dela för alltid</h3>
+                       <h3 className="font-bold text-slate-900 text-lg">3. Dela permanent</h3>
                        <p className="text-sm text-slate-500 mt-1 leading-relaxed">
                            Spara och dela din historia med framtida generationer på FamilySearch.
                        </p>
