@@ -5,7 +5,8 @@ import { DriveFile, FileType, CompressionLevel, TextConfig, RichTextLine, PageMe
 import { fetchFileBlob } from './driveService';
 
 // Initialize PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs`;
+// Use dynamic version to match the installed API version and avoid mismatch errors
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
 const A4_WIDTH = 595.28; 
 const PDF_OVERHEAD_BASE = 15000; 
@@ -482,5 +483,6 @@ export const generateCombinedPDF = async (
 ): Promise<Uint8Array> => {
   const contentBlob = await mergeFilesToPdf(items, accessToken, compression);
   const contentBuffer = await contentBlob.arrayBuffer();
+  // Simply return the merged PDF buffer
   return new Uint8Array(contentBuffer);
 };

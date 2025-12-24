@@ -151,11 +151,18 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
               const partNum = chunk.partNumber;
               const lastHash = syncedHashes.get(partNum);
               
-              // Only sync if fully optimized AND content has changed AND not currently uploading
-              if (chunk.isFullyOptimized && chunk.contentHash !== lastHash && syncStatus[partNum] !== 'uploading') {
+              // NEW LOGIC: Sync if content changed, even if not fully optimized (Draft Sync), but prioritize full optimization
+              // If it's the first time syncing this chunk, do it immediately (Draft)
+              // If we have synced before, only re-sync if fully optimized or if content drastically changed?
+              // Let's keep it simple: Sync if hash changed. Hash includes optimization state.
+              // So if an item gets optimized, the hash changes, triggering a re-sync.
+              
+              const isReadyToUpload = syncStatus[partNum] !== 'uploading';
+
+              if (isReadyToUpload && chunk.contentHash !== lastHash) {
                   
                   setSyncStatus(prev => ({ ...prev, [partNum]: 'uploading' }));
-                  setStatusMessage(`Synkar PDF: ${chunk.title}...`);
+                  setStatusMessage(chunk.isFullyOptimized ? `Synkar slutgiltig PDF: ${chunk.title}...` : `Sparar utkast: ${chunk.title}...`);
                   
                   try {
                       const pdfBytes = await generateCombinedPDF(accessToken, chunk.items, chunk.title, settings.compressionLevel);
@@ -165,22 +172,20 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                       
                       setSyncedHashes(prev => new Map(prev).set(partNum, chunk.contentHash));
                       setSyncStatus(prev => ({ ...prev, [partNum]: 'synced' }));
-                      setStatusMessage(`Klar: ${chunk.title}`);
+                      setStatusMessage(`Sparad: ${chunk.title}`);
                   } catch (e) {
                       console.error(`Failed to sync ${chunk.title}`, e);
                       setSyncStatus(prev => ({ ...prev, [partNum]: 'dirty' }));
-                      setStatusMessage(`Fel vid sync: ${chunk.title}`);
+                      setStatusMessage(`Fel vid sparning: ${chunk.title}`);
                   }
                   
                   // Wait a bit before next chunk to not flood network
                   await new Promise(r => setTimeout(r, 1000));
-              } else if (!chunk.isFullyOptimized) {
-                   setSyncStatus(prev => ({ ...prev, [partNum]: 'waiting' }));
-              }
+              } 
           }
           // Clear status if nothing is happening
           const uploading = Object.values(syncStatus).some(s => s === 'uploading');
-          if (!uploading && statusMessage.startsWith("Synkar")) setStatusMessage("");
+          if (!uploading && statusMessage.startsWith("Sparar")) setStatusMessage("");
       };
 
       const t = setTimeout(syncChunks, 2000); // 2s debounce
@@ -391,188 +396,221 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   );
 };
 
-// ... (Tile and RichTextListEditor components remain unchanged)
-const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove, onDragStart, onDragOver, chunkInfo }: any) => {
-  const groupColor = stringToColor(item.id.split('-')[0] + (item.id.split('-')[1] || ''));
-  const showSplit = item.type === FileType.PDF && (item.pageCount === undefined || item.pageCount > 1);
-  const chunkColor = CHUNK_COLORS[(chunkInfo?.chunkIndex || 0) % CHUNK_COLORS.length];
-  const displaySizeMB = item.processedSize ? (item.processedSize / (1024*1024)).toFixed(2) : ((item.size || 0) / (1024*1024)).toFixed(2);
-  const isEdited = item.pageMeta && Object.keys(item.pageMeta).length > 0;
-  const isCached = !!item.processedBuffer;
-
-  return (
-    <div id={id} className={`group relative aspect-[210/297] bg-white rounded-sm shadow-sm transition-all cursor-pointer transform ${isSelected ? 'ring-4 ring-indigo-500 scale-105 z-10' : 'hover:shadow-xl hover:-translate-y-1'}`} style={{ borderBottom: `4px solid ${groupColor}` }} draggable onDragStart={onDragStart} onDragOver={onDragOver} onClick={onClick}>
-       <div className="absolute top-2 left-2 right-2 bottom-20 bg-slate-100 overflow-hidden flex items-center justify-center border border-slate-100 relative">
-          {(item.type === FileType.PDF && item.blobUrl) || (item.type === FileType.IMAGE && item.blobUrl) ? (
-             <div className="w-full h-full relative overflow-hidden bg-white">
-                {item.type === FileType.PDF ? (
-                    <iframe src={`${item.blobUrl}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`} className="w-full h-full absolute inset-0 border-none pointer-events-none" title="Preview" scrolling="no" loading="lazy" />
-                ) : ( <img src={item.blobUrl} className="w-full h-full object-cover" /> )}
-                <div className="absolute inset-0 bg-transparent z-10"></div>
-             </div>
-          ) : item.type === FileType.IMAGE && item.thumbnail ? (
-             <img src={item.thumbnail} className="w-full h-full object-cover" />
-          ) : (
-             <div className="text-center p-2"><i className={`fas ${item.type === FileType.PDF ? 'fa-file-pdf text-red-400' : 'fa-file-alt text-slate-400'} text-4xl mb-2`}></i>{item.type === FileType.PDF && <p className="text-[10px] text-slate-400">PDF-dokument</p>}</div>
-          )}
-          
-          <div className="absolute top-2 left-2 flex flex-col gap-1 items-start z-20 pointer-events-none">
-              <div className={`px-2 py-1 ${chunkColor} text-white rounded-md flex items-center justify-center text-[10px] font-bold shadow-sm`}>
-                 <span className="opacity-75 mr-1 text-[9px]">Del {(chunkInfo?.chunkIndex || 0) + 1}</span><span>#{index + 1}</span>
-              </div>
-              {chunkInfo?.isTooLarge && (<div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center shadow-lg animate-pulse" title="För stor"><i className="fas fa-exclamation text-white text-[10px]"></i></div>)}
-          </div>
-          <div className={`absolute top-2 right-2 flex flex-col gap-2 transition-opacity z-30 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-              <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="w-8 h-8 bg-indigo-600 text-white rounded-full shadow-md flex items-center justify-center hover:bg-indigo-700"><i className="fas fa-pen text-xs"></i></button>
-              {showSplit && (<button onClick={(e) => { e.stopPropagation(); onSplit(); }} className="w-8 h-8 bg-white rounded-full text-slate-400 hover:text-indigo-600 shadow-md flex items-center justify-center"><i className="fas fa-layer-group text-xs"></i></button>)}
-               <button onClick={(e) => { e.stopPropagation(); onRemove(); }} className="w-8 h-8 bg-white rounded-full text-slate-400 hover:text-red-500 shadow-md flex items-center justify-center"><i className="fas fa-trash-alt text-xs"></i></button>
-          </div>
-          <div className="absolute bottom-0 left-0 right-0 p-1.5 flex justify-between items-end bg-gradient-to-t from-black/60 to-transparent z-20 pointer-events-none">
-                <div className="flex gap-1"><span className="bg-black/40 backdrop-blur-sm text-white px-1.5 py-0.5 rounded text-[8px] font-mono border border-white/10">{displaySizeMB} MB</span>{isCached && (<span className="bg-emerald-500/90 text-white px-1.5 py-0.5 text-[8px] font-bold rounded shadow-sm flex items-center"><i className="fas fa-bolt"></i></span>)}</div>
-                <div className="flex gap-1">{isEdited && (<span className="bg-indigo-600/90 text-white px-1.5 py-0.5 text-[8px] font-bold uppercase rounded shadow-sm">Redigerad</span>)}{item.type === FileType.PDF && item.pageCount && item.pageCount > 1 && (<span className="bg-slate-800/80 backdrop-blur text-white px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm">{item.pageCount} sid</span>)}</div>
-          </div>
-       </div>
-       <div className="absolute bottom-0 left-0 right-0 h-20 px-3 py-2 bg-white">
-          <p className="text-[10px] font-bold text-slate-400 uppercase truncate mb-1">{item.name}</p>
-          <div className="text-[9px] leading-tight text-slate-600 line-clamp-3 font-serif italic opacity-80">{item.description || "Ingen beskrivning..."}</div>
-       </div>
-    </div>
-  );
-};
-
-const RichTextListEditor = ({ lines, onChange, onFocusLine, focusedLineId }: { lines: RichTextLine[], onChange: (l: RichTextLine[]) => void, onFocusLine: (id: string | null) => void, focusedLineId: string | null }) => {
-    const handleTextChange = (id: string, newText: string) => onChange(lines.map(l => l.id === id ? { ...l, text: newText } : l));
-    const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            const newLine: RichTextLine = { id: `line-${Date.now()}`, text: '', config: { ...lines[index].config } };
-            const newLines = [...lines]; newLines.splice(index + 1, 0, newLine); onChange(newLines);
-        } else if (e.key === 'Backspace' && lines[index].text === '' && lines.length > 1) {
-            e.preventDefault(); onChange(lines.filter((_, i) => i !== index));
-        }
-    };
-    if (lines.length === 0) return (<button onClick={() => onChange([{ id: `init-${Date.now()}`, text: '', config: DEFAULT_TEXT_CONFIG }])} className="text-xs text-indigo-500 font-bold hover:bg-indigo-50 p-2 rounded w-full text-left">+ Lägg till textrad</button>);
-    return (<div className="space-y-2">{lines.map((line, index) => (
-        <div key={line.id} className={`flex items-center group relative ${focusedLineId === line.id ? 'ring-2 ring-indigo-100 rounded-lg' : ''}`}>
-            <input value={line.text} onChange={(e) => handleTextChange(line.id, e.target.value)} onFocus={() => onFocusLine(line.id)} onBlur={() => {}} onKeyDown={(e) => handleKeyDown(e, index)} className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-indigo-500 outline-none py-1 px-2 font-serif text-slate-800 transition-colors" style={{ fontWeight: line.config.isBold ? 'bold' : 'normal', fontStyle: line.config.isItalic ? 'italic' : 'normal', fontSize: Math.max(12, line.config.fontSize * 0.7) + 'px', textAlign: line.config.alignment }} placeholder="Skriv här..." />
-            <button onClick={() => onChange(lines.filter(l => l.id !== line.id))} className="absolute right-2 text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-2" tabIndex={-1}><i className="fas fa-times"></i></button>
-        </div>))}</div>);
-};
-
-const EditModal = ({ item, accessToken, onClose, onUpdate, settings }: any) => {
-    const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
-    const [pageMeta, setPageMeta] = useState<Record<number, PageMetadata>>(item.pageMeta || {});
-    const [activePageIndex, setActivePageIndex] = useState(0);
-    const [totalPages, setTotalPages] = useState(1);
-    const [activeSection, setActiveSection] = useState<'header' | 'footer'>('header');
-    const [focusedLineId, setFocusedLineId] = useState<string | null>(null);
-    const [errorMsg, setErrorMsg] = useState<string | null>(null);
-    const [pdfDocProxy, setPdfDocProxy] = useState<any>(null);
-    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-    const mainCanvasRef = useRef<HTMLCanvasElement>(null);
-    const [isLoadingPreview, setIsLoadingPreview] = useState(true);
-
-    useEffect(() => {
-        const init = async () => {
-             setIsLoadingPreview(true); setErrorMsg(null);
-             try {
-                // Ensure we get a fresh buffer
-                const { buffer } = await processFileForCache(item, accessToken, settings.compressionLevel || 'medium');
-                const type = item.type === FileType.PDF ? 'application/pdf' : 'image/jpeg';
-                const sourceBlob = new Blob([buffer as any], { type });
-                const previewUrl = await createPreviewWithOverlay(sourceBlob, item.type, pageMeta);
-                const res = await fetch(previewUrl);
-                const pBlob = await res.blob();
-                setPreviewBlob(pBlob);
-                const pdf = await getPdfDocument(pBlob);
-                setPdfDocProxy(pdf);
-                setTotalPages(pdf.numPages);
-                if (Object.keys(pageMeta).length === 0 && (item.headerText || item.description)) {
-                     const initMeta: PageMetadata = { headerLines: item.headerText ? [{ id: 'l1', text: item.headerText, config: item.textConfig || DEFAULT_TEXT_CONFIG }] : [], footerLines: item.description ? [{ id: 'f1', text: item.description, config: DEFAULT_FOOTER_CONFIG }] : [], };
-                    setPageMeta({ 0: initMeta });
-                }
-             } catch (e: any) { 
-                 console.error("Init failed", e); 
-                 setErrorMsg(e.message || "Kunde inte ladda filen."); 
-             } finally { setIsLoadingPreview(false); }
-        }
-        init();
-    }, []);
-
-    // Other effects identical to previous version...
-    useEffect(() => {
-        const update = async () => {
-            if (!item || errorMsg) return;
-            try {
-                onUpdate({ pageMeta });
-                const { buffer } = await processFileForCache(item, accessToken, settings.compressionLevel || 'medium');
-                const type = item.type === FileType.PDF ? 'application/pdf' : 'image/jpeg';
-                const sourceBlob = new Blob([buffer as any], { type });
-                const url = await createPreviewWithOverlay(sourceBlob, item.type, pageMeta);
-                const res = await fetch(url);
-                const pBlob = await res.blob();
-                setPreviewBlob(pBlob);
-                const pdf = await getPdfDocument(pBlob);
-                setPdfDocProxy(pdf);
-            } catch(e) { console.error(e); }
-        };
-        const t = setTimeout(update, 500); return () => clearTimeout(t);
-    }, [pageMeta]);
-
-    useEffect(() => {
-        const renderMain = async () => { if (pdfDocProxy && mainCanvasRef.current) await renderPdfPageToCanvas(pdfDocProxy, activePageIndex + 1, mainCanvasRef.current, 1.5); };
-        renderMain();
-    }, [pdfDocProxy, activePageIndex]);
-
-    const getCurrentMeta = () => pageMeta[activePageIndex] || { headerLines: [], footerLines: [] };
-    const updateCurrentMeta = (updates: Partial<PageMetadata>) => setPageMeta(prev => ({ ...prev, [activePageIndex]: { ...(prev[activePageIndex] || { headerLines: [], footerLines: [] }), ...updates } }));
-    const handleCopyPageToPng = async () => {
-        if (!previewBlob) return;
-        try { const pngBlob = await extractHighQualityImage(previewBlob, activePageIndex); const url = URL.createObjectURL(pngBlob); const a = document.createElement('a'); a.href = url; a.download = `${item.name.replace(/\.[^/.]+$/, "")}_Sida${activePageIndex + 1}.png`; a.click(); } catch (e) { alert("Kunde inte spara sidan som bild."); }
-    };
-
-    const getActiveConfig = () => { const meta = getCurrentMeta(); const lines = activeSection === 'header' ? meta.headerLines : meta.footerLines; const line = lines.find(l => l.id === focusedLineId); return line?.config || (activeSection === 'header' ? DEFAULT_TEXT_CONFIG : DEFAULT_FOOTER_CONFIG); };
-    const updateActiveConfig = (key: keyof TextConfig, value: any) => { const meta = getCurrentMeta(); const isHeader = activeSection === 'header'; const lines = isHeader ? meta.headerLines : meta.footerLines; if (focusedLineId) { const newLines = lines.map(l => l.id === focusedLineId ? { ...l, config: { ...l.config, [key]: value } } : l); updateCurrentMeta(isHeader ? { headerLines: newLines } : { footerLines: newLines }); } else { const newLines = lines.map(l => ({ ...l, config: { ...l.config, [key]: value } })); updateCurrentMeta(isHeader ? { headerLines: newLines } : { footerLines: newLines }); } };
-    const currentConfig = getActiveConfig();
-
-    return (
-        <div className="fixed inset-0 z-[100] bg-slate-900 flex flex-col animate-in fade-in duration-200">
-            <div className="bg-slate-800 text-white h-14 flex items-center justify-between px-4 border-b border-slate-700 shrink-0">
-                <div className="flex items-center space-x-4"><button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="text-slate-300 hover:text-white"><i className="fas fa-bars text-lg"></i></button><span className="font-bold text-sm truncate max-w-[200px]">{item.name}</span></div>
-                <div className="flex items-center space-x-2"><span className="text-xs text-slate-400 mr-2">{activePageIndex + 1} / {totalPages}</span><button onClick={() => setActivePageIndex(Math.max(0, activePageIndex - 1))} disabled={activePageIndex === 0} className="w-8 h-8 rounded hover:bg-slate-700 disabled:opacity-30"><i className="fas fa-chevron-left"></i></button><button onClick={() => setActivePageIndex(Math.min(totalPages - 1, activePageIndex + 1))} disabled={activePageIndex === totalPages - 1} className="w-8 h-8 rounded hover:bg-slate-700 disabled:opacity-30"><i className="fas fa-chevron-right"></i></button></div>
-                <div className="flex items-center space-x-3"><button onClick={handleCopyPageToPng} className="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center space-x-2 shadow-lg"><i className="fas fa-file-image"></i><span>Spara originalbild (PNG)</span></button><button onClick={onClose} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-1.5 rounded text-xs font-bold transition-colors">Klar</button></div>
-            </div>
-            <div className="flex-1 flex overflow-hidden">
-                {isSidebarOpen && (<div className="w-48 bg-[#222] border-r border-slate-700 flex flex-col overflow-y-auto custom-scrollbar shrink-0"><div className="p-4 space-y-4">{Array.from({ length: totalPages }).map((_, idx) => (<div key={idx} onClick={() => setActivePageIndex(idx)} className={`cursor-pointer group relative flex flex-col items-center ${activePageIndex === idx ? 'opacity-100' : 'opacity-60 hover:opacity-100'}`}><div className={`w-full aspect-[210/297] bg-white rounded-sm overflow-hidden relative shadow-sm transition-all ${activePageIndex === idx ? 'ring-2 ring-indigo-500' : ''}`}><SidebarThumbnail pdfDocProxy={pdfDocProxy} pageIndex={idx} /></div><span className="text-[10px] text-slate-400 mt-1">{idx + 1}</span></div>))}</div></div>)}
-                <div className="flex-1 bg-[#1a1a1a] relative flex items-center justify-center overflow-auto p-8">
-                     {isLoadingPreview && (<div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 backdrop-blur-sm"><i className="fas fa-circle-notch fa-spin text-indigo-400 text-4xl mb-4"></i><p className="text-white font-bold text-sm">Optimerar för redigering...</p></div>)}
-                     {errorMsg && !isLoadingPreview && (<div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 z-10"><div className="bg-slate-800 p-8 rounded-2xl max-w-md text-center border border-slate-700"><i className="fas fa-exclamation-triangle text-4xl text-amber-500 mb-4"></i><h3 className="text-white font-bold text-lg mb-2">Hoppsan!</h3><p className="text-slate-300 text-sm mb-6">{errorMsg}</p><button onClick={onClose} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 font-bold text-sm">Stäng</button></div></div>)}
-                     <div className="shadow-2xl bg-white relative"><canvas ref={mainCanvasRef} className="block max-w-full max-h-[85vh] h-auto w-auto" /></div>
-                </div>
-                <div className="w-80 bg-white border-l border-slate-200 flex flex-col z-20 shadow-xl shrink-0">
-                     <div className="p-4 bg-slate-50 border-b border-slate-200"><h3 className="font-bold text-slate-800 text-sm">Redigera Text</h3></div>
-                     <div className="bg-white p-2 border-b border-slate-200 flex flex-wrap gap-2">
-                         <div className="flex bg-slate-100 rounded p-1"><button onClick={() => updateActiveConfig('isBold', !currentConfig.isBold)} className={`w-7 h-7 rounded text-xs ${currentConfig.isBold ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-bold"></i></button><button onClick={() => updateActiveConfig('isItalic', !currentConfig.isItalic)} className={`w-7 h-7 rounded text-xs ${currentConfig.isItalic ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-italic"></i></button></div>
-                         <div className="flex bg-slate-100 rounded p-1"><button onClick={() => updateActiveConfig('alignment', 'left')} className={`w-7 h-7 rounded text-xs ${currentConfig.alignment === 'left' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-align-left"></i></button><button onClick={() => updateActiveConfig('alignment', 'center')} className={`w-7 h-7 rounded text-xs ${currentConfig.alignment === 'center' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-align-center"></i></button><button onClick={() => updateActiveConfig('alignment', 'right')} className={`w-7 h-7 rounded text-xs ${currentConfig.alignment === 'right' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-align-right"></i></button></div>
-                         <div className="flex bg-slate-100 rounded p-1"><button onClick={() => updateActiveConfig('verticalPosition', 'top')} className={`w-7 h-7 rounded text-xs ${currentConfig.verticalPosition === 'top' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-arrow-up"></i></button><button onClick={() => updateActiveConfig('verticalPosition', 'bottom')} className={`w-7 h-7 rounded text-xs ${currentConfig.verticalPosition === 'bottom' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-arrow-down"></i></button></div>
-                     </div>
-                     <div className="px-4 py-2 border-b border-slate-100"><div className="flex justify-between text-[10px] font-bold text-slate-500 mb-1"><span>Textstorlek</span><span>{currentConfig.fontSize}px</span></div><input type="range" min="8" max="72" value={currentConfig.fontSize} onChange={(e) => updateActiveConfig('fontSize', parseInt(e.target.value))} className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" /></div>
-                     <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                        <div className={`rounded-lg border p-3 cursor-pointer transition-all ${activeSection === 'header' ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-200' : 'bg-white border-slate-200 hover:border-slate-300'}`} onClick={() => setActiveSection('header')}><label className="text-[10px] font-black uppercase text-indigo-900 mb-2 block">Text PÅ sidan</label><RichTextListEditor lines={getCurrentMeta().headerLines || []} onChange={(lines) => updateCurrentMeta({ headerLines: lines })} onFocusLine={setFocusedLineId} focusedLineId={focusedLineId}/></div>
-                        <div className={`rounded-lg border p-3 cursor-pointer transition-all ${activeSection === 'footer' ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-200' : 'bg-white border-slate-200 hover:border-slate-300'}`} onClick={() => setActiveSection('footer')}><label className="text-[10px] font-black uppercase text-slate-500 mb-2 block">Text UNDER sidan</label><RichTextListEditor lines={getCurrentMeta().footerLines || []} onChange={(lines) => updateCurrentMeta({ footerLines: lines })} onFocusLine={setFocusedLineId} focusedLineId={focusedLineId}/></div>
-                         <label className="flex items-center space-x-3 p-3 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100 transition-colors border border-slate-100"><input type="checkbox" checked={getCurrentMeta().hideObject || false} onChange={(e) => updateCurrentMeta({ hideObject: e.target.checked })} className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"/><div><span className="text-xs font-bold text-slate-700 block">Dölj originalbilden</span></div></label>
-                     </div>
-                </div>
-            </div>
-        </div>
-    );
-};
-
 // ... SidebarThumbnail ...
 const SidebarThumbnail = ({ pdfDocProxy, pageIndex }: { pdfDocProxy: any, pageIndex: number }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     useEffect(() => { const render = async () => { if (!pdfDocProxy || !canvasRef.current) return; try { await renderPdfPageToCanvas(pdfDocProxy, pageIndex + 1, canvasRef.current, 0.2); } catch (e) { console.error("Thumb render error", e); } }; render(); }, [pdfDocProxy, pageIndex]);
     return <canvas ref={canvasRef} className="w-full h-full object-contain" />;
+};
+
+interface TileProps {
+  id: string;
+  item: DriveFile;
+  index: number;
+  isSelected: boolean;
+  onClick: (e: React.MouseEvent) => void;
+  onEdit: () => void;
+  onSplit: () => void;
+  onRemove: () => void;
+  onDragStart: (e: React.DragEvent) => void;
+  onDragOver: (e: React.DragEvent) => void;
+  chunkInfo?: { chunkIndex: number, isStart: boolean, isTooLarge: boolean, title: string, isFullyOptimized: boolean };
+}
+
+const Tile: React.FC<TileProps> = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove, onDragStart, onDragOver, chunkInfo }) => {
+    const chunkColor = chunkInfo ? CHUNK_COLORS[chunkInfo.chunkIndex % CHUNK_COLORS.length] : 'bg-slate-200';
+    
+    return (
+        <div 
+            id={id}
+            draggable
+            onDragStart={onDragStart}
+            onDragOver={onDragOver}
+            onClick={onClick}
+            className={`
+                relative aspect-[210/297] bg-white rounded-lg shadow-sm group transition-all cursor-pointer overflow-hidden border
+                ${isSelected ? 'ring-4 ring-indigo-500 border-indigo-500 transform scale-[1.02] z-10' : 'border-slate-200 hover:shadow-lg hover:border-slate-300'}
+                ${chunkInfo?.isTooLarge ? 'ring-2 ring-red-500' : ''}
+            `}
+        >
+             {/* Chunk Indicator Strip */}
+             <div className={`absolute top-0 left-0 right-0 h-1.5 ${chunkColor} z-20`} title={chunkInfo?.title}></div>
+             
+             {/* Main Content */}
+             <div className="h-full w-full flex flex-col">
+                 <div className="flex-1 relative overflow-hidden bg-slate-50 flex items-center justify-center">
+                    {item.type === FileType.IMAGE && item.blobUrl ? (
+                        <img src={item.blobUrl} alt={item.name} className="w-full h-full object-cover" />
+                    ) : item.type === FileType.IMAGE && item.thumbnail ? (
+                        <img src={item.thumbnail} alt={item.name} className="w-full h-full object-cover" />
+                    ) : (
+                        <div className="flex flex-col items-center justify-center p-4 text-center">
+                            <i className={`fas ${item.type === FileType.PDF ? 'fa-file-pdf text-red-400' : 'fa-file-alt text-slate-400'} text-4xl mb-2`}></i>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{item.type}</span>
+                        </div>
+                    )}
+                    
+                    {/* Overlay Actions */}
+                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                        <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="w-8 h-8 bg-white rounded-full flex items-center justify-center text-slate-900 hover:bg-indigo-600 hover:text-white transition-colors" title="Redigera">
+                            <i className="fas fa-pen"></i>
+                        </button>
+                        {item.type === FileType.PDF && (
+                             <button onClick={(e) => { e.stopPropagation(); onSplit(); }} className="w-8 h-8 bg-white rounded-full flex items-center justify-center text-slate-900 hover:bg-amber-500 hover:text-white transition-colors" title="Dela upp sidor">
+                                <i className="fas fa-cut"></i>
+                             </button>
+                        )}
+                        <button onClick={(e) => { e.stopPropagation(); onRemove(); }} className="w-8 h-8 bg-white rounded-full flex items-center justify-center text-slate-900 hover:bg-red-500 hover:text-white transition-colors" title="Ta bort">
+                            <i className="fas fa-trash"></i>
+                        </button>
+                    </div>
+
+                    {isSelected && (
+                        <div className="absolute top-3 right-3 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center shadow-sm z-20">
+                            <i className="fas fa-check text-white text-[10px]"></i>
+                        </div>
+                    )}
+                 </div>
+                 
+                 {/* Footer info */}
+                 <div className="px-3 py-2 bg-white border-t border-slate-100 h-14 flex flex-col justify-center">
+                    <p className="text-[10px] font-bold text-slate-700 truncate mb-0.5">{item.name}</p>
+                    <div className="flex justify-between items-center text-[9px] text-slate-400 font-medium">
+                        <span>{item.pageCount ? `${item.pageCount} sid` : (item.size / (1024*1024)).toFixed(1) + ' MB'}</span>
+                        {item.headerText && <i className="fas fa-heading text-indigo-400" title="Har rubrik"></i>}
+                        {item.description && <i className="fas fa-align-left text-indigo-400 ml-1" title="Har text"></i>}
+                    </div>
+                 </div>
+             </div>
+        </div>
+    );
+};
+
+interface EditModalProps {
+    item: DriveFile;
+    accessToken: string;
+    onClose: () => void;
+    onUpdate: (updates: Partial<DriveFile>) => void;
+    settings: AppSettings;
+}
+
+const EditModal: React.FC<EditModalProps> = ({ item, accessToken, onClose, onUpdate, settings }) => {
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const [headerText, setHeaderText] = useState(item.headerText || '');
+    const [description, setDescription] = useState(item.description || '');
+    const [loading, setLoading] = useState(false);
+
+    // Refresh preview when text changes (debounced)
+    useEffect(() => {
+        const timer = setTimeout(async () => {
+            if (item.type === FileType.IMAGE || item.type === FileType.PDF) {
+                setLoading(true);
+                try {
+                    // Create a temp item with current text for preview generation
+                    const tempItem = { ...item, headerText, description };
+                    // We need the blob to generate preview
+                    const { buffer } = await processFileForCache(item, accessToken, 'medium'); // Use medium for preview speed
+                    const blob = new Blob([buffer as any], { type: item.type === FileType.IMAGE ? 'image/jpeg' : 'application/pdf' });
+                    
+                    const url = await createPreviewWithOverlay(blob, item.type, { 
+                        0: { 
+                            headerLines: headerText ? [{ id: 'h1', text: headerText, config: item.textConfig || DEFAULT_TEXT_CONFIG }] : [], 
+                            footerLines: description ? [{ id: 'f1', text: description, config: DEFAULT_FOOTER_CONFIG }] : [] 
+                        } 
+                    });
+                    setPreviewUrl(url);
+                } catch (e) {
+                    console.error("Preview failed", e);
+                } finally {
+                    setLoading(false);
+                }
+            }
+        }, 800);
+        return () => clearTimeout(timer);
+    }, [headerText, description, item, accessToken]);
+
+    const handleSave = () => {
+        onUpdate({ headerText, description });
+        onClose();
+    };
+
+    return (
+        <div className="fixed inset-0 z-[60] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl w-full max-w-5xl h-[90vh] flex overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+                {/* Left: Preview */}
+                <div className="w-1/2 bg-slate-100 flex items-center justify-center p-8 relative">
+                    {loading && (
+                        <div className="absolute top-4 right-4 bg-white/80 px-3 py-1 rounded-full text-xs font-bold text-indigo-600 shadow-sm z-10">
+                            <i className="fas fa-sync fa-spin mr-2"></i> Uppdaterar förhandsvisning...
+                        </div>
+                    )}
+                    <div className="bg-white shadow-xl max-h-full aspect-[210/297] overflow-hidden">
+                        {previewUrl ? (
+                            <iframe src={previewUrl + '#toolbar=0&navpanes=0&scrollbar=0'} className="w-full h-full border-none" title="Preview" />
+                        ) : (
+                            <div className="w-full h-full flex items-center justify-center">
+                                <i className="fas fa-spinner fa-spin text-4xl text-slate-300"></i>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Right: Controls */}
+                <div className="w-1/2 flex flex-col bg-white">
+                    <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                        <div>
+                             <h3 className="text-xl font-bold text-slate-900">Redigera sida</h3>
+                             <p className="text-xs text-slate-500">{item.name}</p>
+                        </div>
+                        <button onClick={onClose} className="w-8 h-8 rounded-full hover:bg-slate-100 flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors">
+                            <i className="fas fa-times text-lg"></i>
+                        </button>
+                    </div>
+                    
+                    <div className="flex-1 overflow-y-auto p-8 space-y-8">
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-2 uppercase tracking-wide">Rubrik (Överst)</label>
+                            <input 
+                                type="text" 
+                                value={headerText} 
+                                onChange={(e) => setHeaderText(e.target.value)} 
+                                className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 transition-all font-serif text-lg outline-none"
+                                placeholder="t.ex. Sommarstugan 1952"
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-bold text-slate-700 mb-2 uppercase tracking-wide">Beskrivning (Nederst)</label>
+                            <textarea 
+                                value={description} 
+                                onChange={(e) => setDescription(e.target.value)} 
+                                rows={6}
+                                className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-500 focus:ring-4 focus:ring-indigo-50 transition-all text-sm leading-relaxed outline-none resize-none"
+                                placeholder="Berätta mer om bilden eller dokumentet..."
+                            />
+                        </div>
+
+                        {/* Formatting info */}
+                        <div className="bg-indigo-50 rounded-xl p-4 flex items-start gap-3">
+                             <i className="fas fa-lightbulb text-indigo-500 mt-1"></i>
+                             <div className="text-xs text-indigo-900 leading-relaxed">
+                                 <strong>Tips:</strong> Texten kommer att "brännas in" på sidan när boken exporteras. Rubriken hamnar högst upp och beskrivningen längst ner på sidan.
+                             </div>
+                        </div>
+                    </div>
+
+                    <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+                        <button onClick={onClose} className="px-6 py-3 rounded-xl font-bold text-slate-600 hover:bg-white hover:shadow-sm border border-transparent hover:border-slate-200 transition-all">
+                            Avbryt
+                        </button>
+                        <button onClick={handleSave} className="px-8 py-3 rounded-xl font-bold text-white bg-slate-900 hover:bg-indigo-600 shadow-lg hover:shadow-indigo-200 hover:-translate-y-0.5 transition-all">
+                            Spara ändringar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
 };
 
 export default StoryEditor;
