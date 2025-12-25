@@ -19,19 +19,20 @@ const stringToColor = (str: string) => {
   return color;
 };
 
-const CHUNK_COLORS = [
-    'border-indigo-500',
-    'border-emerald-500',
-    'border-amber-500',
-    'border-rose-500',
-    'border-cyan-500'
+// Distinct visual colors for chunks
+const CHUNK_THEMES = [
+    { border: 'border-indigo-500', bg: 'bg-indigo-500', text: 'text-indigo-700', lightBg: 'bg-indigo-50' },
+    { border: 'border-emerald-500', bg: 'bg-emerald-500', text: 'text-emerald-700', lightBg: 'bg-emerald-50' },
+    { border: 'border-amber-500', bg: 'bg-amber-500', text: 'text-amber-700', lightBg: 'bg-amber-50' },
+    { border: 'border-rose-500', bg: 'bg-rose-500', text: 'text-rose-700', lightBg: 'bg-rose-50' },
+    { border: 'border-cyan-500', bg: 'bg-cyan-500', text: 'text-cyan-700', lightBg: 'bg-cyan-50' }
 ];
 
 interface ChunkData {
     id: number;
     items: DriveFile[];
     sizeBytes: number;
-    isOptimized: boolean; // True if we have confirmed size < limit
+    isOptimized: boolean; 
     isUploading: boolean;
     isSynced: boolean;
     title: string;
@@ -69,171 +70,170 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [activeChunkFilter, setActiveChunkFilter] = useState<number | null>(null);
   
-  // Layout State for Responsive Sidebar
+  // Layout State
   const [isSidebarCompact, setIsSidebarCompact] = useState(false);
   const [showSidebarOverlay, setShowSidebarOverlay] = useState(false);
   const rightColumnRef = useRef<HTMLDivElement>(null);
 
   // --- OPTIMIZATION STATE ---
   const [chunks, setChunks] = useState<ChunkData[]>([]);
-  const [optimizationCursor, setOptimizationCursor] = useState(0); // Index in 'items' where next chunk starts
-  
-  // Reset optimization when items change significantly
+  const [optimizationCursor, setOptimizationCursor] = useState(0); 
+  const [optimizingStatus, setOptimizingStatus] = useState<string>('');
+
+  // Reset optimization when fundamental items change
   const itemsHash = items.map(i => i.id + i.modifiedTime).join('|');
   useEffect(() => {
       setOptimizationCursor(0);
       setChunks([]);
   }, [itemsHash, settings.maxChunkSizeMB, settings.compressionLevel]);
 
-  // --- THE SQUEEZE ALGORITHM (Divide & Conquer via Real Measurement) ---
+  // --- SAFER OPTIMIZATION ALGORITHM (Linear Accumulation) ---
   useEffect(() => {
     let isCancelled = false;
+    const limitBytes = settings.maxChunkSizeMB * 1024 * 1024;
+    
+    // We start measuring accurately when we reach this threshold (e.g. 85% full)
+    // allowing us to skip expensive PDF generation for the first few small files.
+    const precisionThreshold = limitBytes * 0.85; 
 
-    const optimizeNextChunk = async () => {
-        // If we processed all items, stop.
-        if (optimizationCursor >= items.length) return;
-        // If we are already working on the current cursor (i.e., last chunk isn't optimized yet), wait.
-        if (chunks.length > 0 && !chunks[chunks.length - 1].isOptimized) return;
+    const processNextStep = async () => {
+        if (isCancelled) return;
 
-        const limitBytes = settings.maxChunkSizeMB * 1024 * 1024;
-        const safetyBytes = limitBytes * (1 - (settings.safetyMarginPercent / 100)); // Target slightly below max
-
-        // 1. Initial Guess (Greedy)
-        let candidateEndIndex = optimizationCursor;
-        let estimatedSize = 0;
-        
-        // Quick pass to find a starting point using rough estimates
-        while (candidateEndIndex < items.length) {
-             const item = items[candidateEndIndex];
-             // Use processedSize if available, else guess
-             const itemSize = item.processedSize || item.size * 0.7; 
-             if (estimatedSize + itemSize > limitBytes * 1.2) break; // Allow slight overshoot for squeeze
-             estimatedSize += itemSize;
-             candidateEndIndex++;
+        // 1. Done?
+        if (optimizationCursor >= items.length) {
+            setOptimizingStatus('');
+            return;
         }
-        // Ensure at least one item
-        if (candidateEndIndex === optimizationCursor) candidateEndIndex++;
 
-        // 2. Measure & Squeeze Loop
-        let bestFitIndex = candidateEndIndex;
-        let bestFitSize = 0;
-        let isStable = false;
+        // 2. Wait if previous chunk isn't fully locked in state yet
+        // (Prevents race conditions where we optimize chunk 2 before chunk 1 is rendered)
+        if (chunks.length > 0 && !chunks[chunks.length - 1].isOptimized) {
+            return;
+        }
 
-        // Create a temporary chunk entry to show "Optimizing..."
         const currentChunkId = chunks.length + 1;
-        const tempItems = items.slice(optimizationCursor, candidateEndIndex);
+        setOptimizingStatus(`Beräknar Del ${currentChunkId}...`);
+
+        let currentBatch: DriveFile[] = [];
+        let currentEstimatedSize = 0;
+        let nextCursor = optimizationCursor;
+        let batchSizeBytes = 0;
+
+        // PHASE 1: FAST FILL (Estimate)
+        // Add items until we are close to the threshold
+        while (nextCursor < items.length) {
+             const item = items[nextCursor];
+             // Estimate: Use cached size if available, otherwise raw size * compression factor guess (0.7)
+             const itemEstSize = item.processedSize || (item.size * 0.7); 
+             
+             if (currentEstimatedSize + itemEstSize > precisionThreshold) {
+                 break; // Stop fast fill, switch to precision
+             }
+             
+             currentBatch.push(item);
+             currentEstimatedSize += itemEstSize;
+             nextCursor++;
+        }
+
+        // Ensure we have at least one item to start with
+        if (currentBatch.length === 0 && nextCursor < items.length) {
+            currentBatch.push(items[nextCursor]);
+            nextCursor++;
+        }
+
+        // PHASE 2: PRECISION MODE (Measure exact PDF size)
+        let isFinalized = false;
         
-        // Update UI to show we are working
-        if (!isCancelled) {
-             setChunks(prev => [
-                 ...prev.filter(c => c.isOptimized), // Keep finished ones
-                 {
-                     id: currentChunkId,
-                     items: tempItems,
-                     sizeBytes: 0,
-                     isOptimized: false,
-                     isUploading: false,
-                     isSynced: false,
-                     title: `${bookTitle} (Del ${currentChunkId})`
-                 }
-             ]);
-        }
-
-        // Loop to find exact fit
-        while (!isStable && !isCancelled) {
-            const candidateItems = items.slice(optimizationCursor, candidateEndIndex);
-            
-            // MEASURE: Generate PDF in RAM
-            let realSize = 0;
-            try {
-                // Ensure items are processed/cached first
-                for (const item of candidateItems) {
-                    if (!item.processedBuffer || item.compressionLevelUsed !== settings.compressionLevel) {
+        while (!isFinalized && !isCancelled) {
+             // A. Ensure all items in batch are processed/cached locally
+             for (const item of currentBatch) {
+                 if (!item.processedBuffer || item.compressionLevelUsed !== settings.compressionLevel) {
+                     setOptimizingStatus(`Komprimerar ${item.name}...`);
+                     try {
                          const { buffer, size } = await processFileForCache(item, accessToken, settings.compressionLevel);
-                         // Cache this update immediately to avoid re-downloading
                          if (!isCancelled) {
-                             onUpdateItems(prev => prev.map(p => p.id === item.id ? { ...p, processedBuffer: buffer, processedSize: size, compressionLevelUsed: settings.compressionLevel } : p));
+                            // Update the item in the main list so we don't re-process it next time
+                            // Note: We use a functional update to avoid stale state closure issues
+                            onUpdateItems(prev => prev.map(p => p.id === item.id ? { ...p, processedBuffer: buffer, processedSize: size, compressionLevelUsed: settings.compressionLevel } : p));
                          }
-                    }
-                }
-                
-                // Now measure the combination
-                const pdfBytes = await generateCombinedPDF(accessToken, candidateItems, "temp", settings.compressionLevel);
-                realSize = pdfBytes.byteLength;
-            } catch (e) {
-                console.error("Measurement failed", e);
-                break; // Abort
-            }
+                     } catch (e) {
+                         console.error("Failed to process", item.name);
+                     }
+                 }
+             }
 
-            // DECIDE
-            if (realSize > limitBytes) {
-                // Too big, remove last item
-                if (candidateEndIndex - 1 > optimizationCursor) {
-                    candidateEndIndex--;
-                } else {
-                    // Even one file is too big? Keep it but warn (or just accept it as a single file chunk)
-                    bestFitSize = realSize;
-                    isStable = true; 
-                }
-            } else if (realSize < safetyBytes && candidateEndIndex < items.length) {
-                // Too small (room for more), add next item
-                candidateEndIndex++;
-                // Check if we just jumped too far in next iteration
-            } else {
-                // Just right (between safety and limit) OR we hit end of list
-                // Double check: if we added an item and it became too big, we revert in the logic above?
-                // Actually, the logic "realSize > limit" handles the "oops too big" case.
-                // So if we are here, we are <= limit.
-                
-                // Optimization: Try ONE MORE to see if it fits?
-                // The algorithm above naturally oscillates. 
-                // Let's strict check:
-                // If we are valid, save this state as "Best so far".
-                bestFitIndex = candidateEndIndex;
-                bestFitSize = realSize;
-                
-                // Can we fit one more?
-                if (candidateEndIndex < items.length) {
-                    // Speculatively check next loop, or just stop here if close enough?
-                    // "Divide and conquer" implies finding the boundary.
-                    // If we are < 14.5 MB, we SHOULD try more.
-                    if (realSize < (limitBytes * 0.9)) { 
-                         candidateEndIndex++;
-                         // Continue loop to measure
-                    } else {
-                         isStable = true;
-                    }
-                } else {
-                    isStable = true; // End of list
-                }
-            }
+             // B. Measure Actual Combined PDF Size
+             setOptimizingStatus(`Mäter ${currentBatch.length} filer...`);
+             let realSize = 0;
+             try {
+                 const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel);
+                 realSize = pdfBytes.byteLength;
+                 batchSizeBytes = realSize;
+             } catch (e) {
+                 console.error("Measurement failed");
+                 break; 
+             }
+
+             // C. Decide
+             if (realSize > limitBytes) {
+                 // Too big!
+                 if (currentBatch.length === 1) {
+                     // Special Case: A single file is larger than the limit.
+                     // We must accept it as a chunk, otherwise we block forever.
+                     // (In a real app, we might warn the user here)
+                     isFinalized = true; 
+                 } else {
+                     // Remove the last added item, and finalize the chunk WITHOUT it.
+                     currentBatch.pop();
+                     nextCursor--; // Backtrack cursor
+                     
+                     // Re-measure the valid batch one last time to get correct size for UI
+                     // (Optimization: we could remember previous loop's size, but safety first)
+                     const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel);
+                     batchSizeBytes = pdfBytes.byteLength;
+                     isFinalized = true;
+                 }
+             } else {
+                 // Fits! Can we add one more?
+                 if (nextCursor < items.length) {
+                     // Try adding next item
+                     const nextItem = items[nextCursor];
+                     currentBatch.push(nextItem);
+                     nextCursor++;
+                     // Loop continues to measure this new batch
+                 } else {
+                     // No more items, this is the last chunk
+                     isFinalized = true;
+                 }
+             }
         }
 
-        if (!isCancelled && isStable) {
-            const finalItems = items.slice(optimizationCursor, candidateEndIndex);
-            setChunks(prev => {
-                const existing = prev.filter(c => c.isOptimized);
-                return [...existing, {
-                    id: existing.length + 1,
-                    items: finalItems,
-                    sizeBytes: bestFitSize,
+        if (!isCancelled) {
+            setChunks(prev => [
+                ...prev, 
+                {
+                    id: currentChunkId,
+                    items: currentBatch,
+                    sizeBytes: batchSizeBytes,
                     isOptimized: true,
                     isUploading: false,
                     isSynced: false,
-                    title: `${bookTitle} (Del ${existing.length + 1})`
-                }];
-            });
-            setOptimizationCursor(candidateEndIndex);
+                    title: `${bookTitle} (Del ${currentChunkId})`
+                }
+            ]);
+            setOptimizationCursor(nextCursor);
+            setOptimizingStatus('');
         }
     };
 
-    const timer = setTimeout(optimizeNextChunk, 500); // Small delay to allow UI to settle
+    // Trigger loop with a small delay to allow UI to breathe
+    const timer = setTimeout(processNextStep, 100);
     return () => { isCancelled = true; clearTimeout(timer); };
 
   }, [itemsHash, optimizationCursor, chunks.length, settings.compressionLevel, settings.maxChunkSizeMB]);
 
 
-  // --- UPLOAD / SYNC LOGIC ---
+  // --- UPLOAD / SYNC LOGIC (Linear Sync) ---
   useEffect(() => {
       if (!currentBook.driveFolderId) return;
 
@@ -242,7 +242,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
           const chunkToSync = chunks.find(c => c.isOptimized && !c.isSynced && !c.isUploading);
           if (!chunkToSync) return;
 
-          // Mark uploading
           setChunks(prev => prev.map(c => c.id === chunkToSync.id ? { ...c, isUploading: true } : c));
 
           try {
@@ -253,7 +252,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
               setChunks(prev => prev.map(c => c.id === chunkToSync.id ? { ...c, isUploading: false, isSynced: true } : c));
           } catch (e) {
               console.error("Upload failed", e);
-              // Reset uploading so it retries (or handle error state)
+              // Reset uploading so it retries later (or handle error state)
               setChunks(prev => prev.map(c => c.id === chunkToSync.id ? { ...c, isUploading: false } : c));
           }
       };
@@ -284,7 +283,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   // --- HELPER FOR UI ---
   const getChunkForItem = (itemId: string) => chunks.find(c => c.items.some(i => i.id === itemId));
 
-  // --- HANDLERS (Same as before) ---
+  // --- HANDLERS ---
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
@@ -387,7 +386,9 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
              {!isCompact ? (
                  <>
                     <h2 className="text-xl font-serif font-bold text-slate-900 leading-tight">Filer till FamilySearch</h2>
-                    <p className="text-[10px] text-slate-500 font-medium mt-1">Klicka och filtrera minnen</p>
+                    <p className="text-[10px] text-slate-500 font-medium mt-1">
+                        {optimizingStatus ? <span className="text-amber-600 animate-pulse"><i className="fas fa-circle-notch fa-spin mr-1"></i> {optimizingStatus}</span> : 'Klar att spara och dela'}
+                    </p>
                  </>
              ) : (
                  <button onClick={toggleOverlay} className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300 transition-colors">
@@ -396,20 +397,22 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
              )}
         </div>
         
-        {/* CONTINUOUS LIST "METER" */}
-        <div className={`flex-1 overflow-y-auto bg-slate-50/50 custom-scrollbar ${isCompact ? 'px-1' : 'p-0'}`}>
+        {/* CHUNK METER LIST */}
+        <div className={`flex-1 overflow-y-auto bg-slate-50/50 custom-scrollbar ${isCompact ? 'px-1' : 'p-4 space-y-3'}`}>
              {chunks.map((chunk, idx) => {
+                 const theme = CHUNK_THEMES[idx % CHUNK_THEMES.length];
                  const isGreen = chunk.isSynced;
-                 const isOptimizing = !chunk.isOptimized;
-                 const sizeMB = (chunk.sizeBytes / (1024 * 1024)).toFixed(1);
-                 const borderColor = CHUNK_COLORS[idx % CHUNK_COLORS.length].replace('border-', 'border-l-4 border-');
+                 const isUploading = chunk.isUploading;
+                 const sizeMB = (chunk.sizeBytes / (1024 * 1024));
+                 const maxMB = settings.maxChunkSizeMB;
+                 const percentFilled = Math.min(100, (sizeMB / maxMB) * 100);
 
                  if (isCompact) {
                      return (
                          <div 
                             key={chunk.id}
                             onClick={toggleOverlay}
-                            className={`w-10 h-10 mx-auto my-2 rounded-full flex items-center justify-center text-xs font-bold shadow-sm cursor-pointer hover:scale-110 transition-transform ${isGreen ? 'bg-emerald-500 text-white' : isOptimizing ? 'bg-amber-100 text-amber-600 animate-pulse' : 'bg-white text-slate-600'}`}
+                            className={`w-10 h-10 mx-auto my-2 rounded-full flex items-center justify-center text-xs font-bold shadow-sm cursor-pointer hover:scale-110 transition-transform text-white ${isGreen ? 'bg-emerald-500' : isUploading ? 'bg-indigo-500 animate-pulse' : theme.bg}`}
                             title={chunk.title}
                          >
                              {chunk.id}
@@ -418,49 +421,68 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                  }
 
                  return (
-                     <div key={chunk.id} className={`group bg-white border-b border-slate-100 ${borderColor}`}>
-                         {/* Header for Chunk */}
-                         <div 
-                            onClick={() => setActiveChunkFilter(activeChunkFilter === chunk.id ? null : chunk.id)}
-                            className={`px-4 py-3 flex justify-between items-center cursor-pointer hover:bg-slate-50 transition-colors ${activeChunkFilter === chunk.id ? 'bg-slate-50' : ''}`}
-                         >
-                             <div className="flex items-center space-x-2">
-                                 <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${isGreen ? 'bg-emerald-100 text-emerald-700' : isOptimizing ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>
-                                     {chunk.id}
-                                 </span>
-                                 <span className="text-xs font-bold text-slate-700">Del {chunk.id}</span>
+                     <div 
+                        key={chunk.id} 
+                        onClick={() => setActiveChunkFilter(activeChunkFilter === chunk.id ? null : chunk.id)}
+                        className={`group bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden cursor-pointer transition-all hover:shadow-md ${activeChunkFilter === chunk.id ? 'ring-2 ring-indigo-500 ring-offset-1' : ''}`}
+                     >
+                         <div className="p-4">
+                             <div className="flex justify-between items-center mb-3">
+                                 <div className="flex items-center space-x-3">
+                                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-black text-white ${isGreen ? 'bg-emerald-500' : theme.bg}`}>
+                                         {chunk.id}
+                                     </span>
+                                     <div>
+                                         <h3 className="text-sm font-bold text-slate-800">Del {chunk.id}</h3>
+                                         <p className="text-[10px] text-slate-400 font-medium">
+                                             {chunk.items.length} objekt
+                                         </p>
+                                     </div>
+                                 </div>
+                                 <div className="text-right">
+                                     {isGreen ? (
+                                         <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full uppercase tracking-wider">
+                                             <i className="fas fa-check mr-1"></i> Sparad
+                                         </span>
+                                     ) : isUploading ? (
+                                         <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-full uppercase tracking-wider animate-pulse">
+                                             <i className="fas fa-sync fa-spin mr-1"></i> Sparar
+                                         </span>
+                                     ) : (
+                                         <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-full uppercase tracking-wider">
+                                             Redo
+                                         </span>
+                                     )}
+                                 </div>
+                             </div>
+
+                             {/* Storage Meter */}
+                             <div className="relative w-full h-3 bg-slate-100 rounded-full overflow-hidden mb-2">
+                                 <div 
+                                    className={`absolute top-0 left-0 h-full transition-all duration-1000 ${isGreen ? 'bg-emerald-500' : theme.bg}`}
+                                    style={{ width: `${percentFilled}%` }}
+                                 ></div>
                              </div>
                              
-                             <div className="flex items-center space-x-2">
-                                 {chunk.isUploading && <i className="fas fa-circle-notch fa-spin text-indigo-500 text-xs"></i>}
-                                 {chunk.isSynced && <i className="fas fa-check text-emerald-500 text-xs"></i>}
-                                 <span className="text-[10px] font-mono text-slate-400">{isOptimizing ? 'Beräknar...' : `${sizeMB} MB`}</span>
+                             <div className="flex justify-between text-[10px] font-bold text-slate-500">
+                                 <span>{sizeMB.toFixed(1)} MB</span>
+                                 <span>{maxMB.toFixed(1)} MB Max</span>
                              </div>
-                         </div>
-
-                         {/* File List inside Chunk */}
-                         <div className="px-4 pb-3 space-y-1">
-                             {chunk.items.map(file => (
-                                 <div key={file.id} className="flex justify-end items-center text-[10px] text-slate-500 group/file">
-                                     <span className="truncate max-w-[180px] text-right dir-rtl">{file.name}</span>
-                                     <div className="w-1.5 h-1.5 rounded-full bg-slate-300 ml-2 group-hover/file:bg-indigo-400"></div>
-                                 </div>
-                             ))}
-                             {isOptimizing && (
-                                 <div className="text-[10px] text-amber-500 text-right italic animate-pulse pr-2">
-                                     Optimerar gränser...
-                                 </div>
-                             )}
                          </div>
                      </div>
                  );
              })}
              
-             {/* Fallback if no chunks yet (during initial load) */}
-             {chunks.length === 0 && items.length > 0 && (
-                 <div className="p-4 text-center text-xs text-slate-400 italic">
-                     <i className="fas fa-circle-notch fa-spin mr-2"></i>
-                     Analyserar filer...
+             {/* Loading / Optimizing Placeholder */}
+             {optimizingStatus && (
+                 <div className="p-4 bg-white rounded-xl border border-slate-200 border-dashed animate-pulse opacity-70">
+                     <div className="flex items-center space-x-3">
+                         <div className="w-8 h-8 bg-slate-200 rounded-lg"></div>
+                         <div className="flex-1 space-y-2">
+                             <div className="h-3 bg-slate-200 rounded w-1/2"></div>
+                             <div className="h-2 bg-slate-200 rounded w-3/4"></div>
+                         </div>
+                     </div>
                  </div>
              )}
         </div>
@@ -559,7 +581,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                         // Simplified chunk info for tile
                         const chunkInfo = chunk ? { 
                             chunkIndex: chunk.id, 
-                            colorClass: CHUNK_COLORS[(chunk.id - 1) % CHUNK_COLORS.length].replace('border-', 'bg-'), 
+                            colorClass: CHUNK_THEMES[(chunk.id - 1) % CHUNK_THEMES.length].bg, 
                             isTooLarge: false 
                         } : undefined;
 
