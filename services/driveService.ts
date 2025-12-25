@@ -1,3 +1,4 @@
+
 import { DriveFile, FileType } from '../types';
 
 const DRIVE_API_URL = 'https://www.googleapis.com/drive/v3';
@@ -89,15 +90,45 @@ export const createFolder = async (accessToken: string, parentId: string, name: 
   return data.id;
 };
 
+// Find existing file to avoid duplicates
+const findFileInFolder = async (accessToken: string, folderId: string, filename: string): Promise<string | null> => {
+    try {
+        const query = `name = '${filename}' and '${folderId}' in parents and trashed = false`;
+        const response = await fetch(`${DRIVE_API_URL}/files?q=${encodeURIComponent(query)}&fields=files(id)`, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        const data = await response.json();
+        if (data.files && data.files.length > 0) {
+            return data.files[0].id;
+        }
+        return null;
+    } catch (e) {
+        console.error("Error searching for file", e);
+        return null;
+    }
+};
+
 export const uploadToDrive = async (accessToken: string, folderId: string, filename: string, blob: Blob) => {
-  const metadata = {
-    name: filename,
-    parents: [folderId],
+  // 1. Check if file exists
+  const existingFileId = await findFileInFolder(accessToken, folderId, filename);
+
+  const method = existingFileId ? 'PATCH' : 'POST';
+  const url = existingFileId 
+    ? `https://www.googleapis.com/upload/drive/v3/files/${existingFileId}?uploadType=resumable`
+    : `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable`;
+
+  const metadata: any = {
     mimeType: 'application/pdf'
   };
+  
+  // Only set name and parent on creation, or if we want to rename/move (we don't here)
+  if (!existingFileId) {
+      metadata.name = filename;
+      metadata.parents = [folderId];
+  }
 
-  const initResponse = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
-    method: 'POST',
+  const initResponse = await fetch(url, {
+    method: method,
     headers: {
       'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json; charset=UTF-8',
@@ -108,7 +139,11 @@ export const uploadToDrive = async (accessToken: string, folderId: string, filen
   });
 
   const uploadUrl = initResponse.headers.get('Location');
-  if (!uploadUrl) throw new Error('Ingen uppladdnings-URL');
+  if (!uploadUrl) {
+      // Sometimes PATCH doesn't return Location if just metadata, but for uploadType=resumable it should.
+      // If it fails for existing file, fallback to create new? No, throw error.
+      throw new Error('Kunde inte initiera uppladdning till Drive');
+  }
 
   await fetch(uploadUrl, { method: 'PUT', body: blob });
 };

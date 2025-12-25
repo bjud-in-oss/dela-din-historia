@@ -67,7 +67,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ googleBtnRef, isGoogleReady, 
                    <div>
                        <h3 className="font-bold text-slate-900 text-lg">3. Dela permanent</h3>
                        <p className="text-sm text-slate-500 mt-1 leading-relaxed">
-                           Spara och dela din historia med framtida generationer på FamilySearch.
+                           Spara och dela din historia begränsat till dina olika släktgrupper eller till alla på FamilySearch.
                        </p>
                    </div>
               </div>

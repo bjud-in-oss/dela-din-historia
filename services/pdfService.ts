@@ -226,12 +226,13 @@ export const calculateChunks = (
     return chunks;
 };
 
+// UPDATED DEFAULTS
 export const DEFAULT_TEXT_CONFIG: TextConfig = {
-  fontSize: 24, alignment: 'center', isBold: true, isItalic: false, verticalPosition: 'top'
+  fontSize: 24, alignment: 'center', isBold: true, isItalic: false, verticalPosition: 'center'
 };
 
 export const DEFAULT_FOOTER_CONFIG: TextConfig = {
-  fontSize: 12, alignment: 'left', isBold: false, isItalic: false, verticalPosition: 'bottom'
+  fontSize: 12, alignment: 'left', isBold: false, isItalic: false, verticalPosition: 'top'
 };
 
 // --- PDF RENDERING ---
@@ -264,6 +265,15 @@ export const extractHighQualityImage = async (blob: Blob, pageIndex: number): Pr
     });
 };
 
+export const generatePageThumbnail = async (blob: Blob, pageIndex: number = 0): Promise<string> => {
+    const pdf = await getPdfDocument(blob);
+    const canvas = document.createElement('canvas');
+    await renderPdfPageToCanvas(pdf, pageIndex + 1, canvas, 0.3); // Low scale for thumbnail
+    return new Promise((resolve) => {
+        canvas.toBlob((b) => b ? resolve(URL.createObjectURL(b)) : resolve(''), 'image/jpeg', 0.7);
+    });
+};
+
 export const getPdfPageCount = async (blob: Blob): Promise<number> => {
     try {
         const buffer = await blob.arrayBuffer();
@@ -284,6 +294,10 @@ export const splitPdfIntoPages = async (pdfBlob: Blob, filenameBase: string): Pr
     newPdf.addPage(copiedPage);
     const pdfBytes = await newPdf.save();
     const blob = createBlob(pdfBytes, 'application/pdf');
+    
+    // Generate thumbnail for the split page
+    const thumbUrl = await generatePageThumbnail(blob, 0);
+
     resultFiles.push({
       id: `split-${Date.now()}-${i}`,
       name: `${filenameBase} (Sida ${i + 1})`,
@@ -291,6 +305,7 @@ export const splitPdfIntoPages = async (pdfBlob: Blob, filenameBase: string): Pr
       size: blob.size,
       modifiedTime: new Date().toISOString(),
       blobUrl: URL.createObjectURL(blob),
+      thumbnail: thumbUrl,
       isLocal: true,
       pageCount: 1,
       pageMeta: {}
@@ -308,17 +323,65 @@ const drawRichLines = (page: PDFPage, lines: RichTextLine[], fonts: any, region:
     lines.forEach(line => { if(line.text) totalTextHeight += (line.config.fontSize * 1.2); });
     if (totalTextHeight === 0) return;
 
-    let startY = region === 'top' ? height - margin : margin + totalTextHeight; 
-    const bgPadding = 10;
+    let startY = 0;
     
-    page.drawRectangle({
-        x: 0,
-        y: region === 'top' ? startY - totalTextHeight - bgPadding : margin - bgPadding,
-        width: width,
-        height: totalTextHeight + (bgPadding * 2),
-        color: rgb(1, 1, 1),
-        opacity: 0.8
-    });
+    // LOGIC for Header: Default is Center/Center or Top/Center
+    if (region === 'top') {
+        const line = lines[0]; // Assuming one line block for now
+        if (line?.config.verticalPosition === 'center') {
+             startY = (height / 2) + (totalTextHeight / 2);
+        } else if (line?.config.verticalPosition === 'bottom') {
+             // Not really used for Header, but kept for safety
+             startY = (height / 2);
+        } else {
+             // Top
+             startY = height - margin;
+        }
+    } else {
+        // LOGIC for Footer: Default is Top (directly below content area)
+        // bottom-left is 0,0
+        // 'top' here means Top of the footer area (closest to image)
+        startY = margin + totalTextHeight; 
+    }
+
+    // Background for text (optional, but good for readability)
+    // Only draw bg if we are not centered in the middle of page (overlay style)
+    if (region === 'top' && lines[0]?.config.verticalPosition !== 'center') {
+        // Draw standard white bg
+        const bgPadding = 10;
+        page.drawRectangle({
+            x: 0,
+            y: startY - totalTextHeight - bgPadding,
+            width: width,
+            height: totalTextHeight + (bgPadding * 2),
+            color: rgb(1, 1, 1),
+            opacity: 0.8
+        });
+    } else if (region === 'bottom') {
+         // Footer background
+         const bgPadding = 10;
+         page.drawRectangle({
+            x: 0,
+            y: startY - totalTextHeight - bgPadding,
+            width: width,
+            height: totalTextHeight + (bgPadding * 2),
+            color: rgb(1, 1, 1),
+            opacity: 0.8
+        });
+    } else {
+        // Centered text: Add a subtle box? Or just text. Let's do a box.
+        const maxTextWidth = Math.max(...lines.map(l => fonts.bold.widthOfTextAtSize(l.text, l.config.fontSize))) + 40;
+        const bgPadding = 20;
+         page.drawRectangle({
+            x: (width - maxTextWidth) / 2,
+            y: startY - totalTextHeight - bgPadding + 10,
+            width: maxTextWidth,
+            height: totalTextHeight + (bgPadding * 2),
+            color: rgb(1, 1, 1),
+            opacity: 0.85,
+            // cornerRadius: 5 // Not supported in this version of pdf-lib drawRectangle easily without extended paths
+        });
+    }
 
     let currentY = startY;
     lines.forEach(line => {
