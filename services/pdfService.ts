@@ -361,15 +361,15 @@ export const createPreviewWithOverlay = async (fileBlob: Blob, fileType: FileTyp
             const page = pdfDoc.addPage([A4_WIDTH, scaledHeight]);
             page.drawImage(image, { x: 0, y: 0, width: A4_WIDTH, height: scaledHeight });
         } else {
+            // TREAT GOOGLE_DOC as PDF here (assuming buffer is already PDF)
             const sourcePdf = await PDFDocument.load(buffer, { ignoreEncryption: true });
             const embeddedPages = await pdfDoc.embedPages(sourcePdf.getPages());
             embeddedPages.forEach((ep) => {
-                const pWidth = ep.width || A4_WIDTH;
-                const pHeight = ep.height || (A4_WIDTH * 1.414);
-                const scale = A4_WIDTH / pWidth;
-                const scaledHeight = pHeight * scale;
-                const page = pdfDoc.addPage([A4_WIDTH, scaledHeight]);
-                page.drawPage(ep, { x: 0, y: 0, width: A4_WIDTH, height: scaledHeight });
+                const pWidth = ep.width;
+                const pHeight = ep.height;
+                // Preserve original page size for documents
+                const page = pdfDoc.addPage([pWidth, pHeight]);
+                page.drawPage(ep, { x: 0, y: 0, width: pWidth, height: pHeight });
             });
         }
     } catch (e: any) {
