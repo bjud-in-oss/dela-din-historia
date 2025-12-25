@@ -37,6 +37,8 @@ const App: React.FC = () => {
   
   // Dashboard Intro State
   const [hideIntro, setHideIntro] = useState(false);
+  // Separate state for the checkbox to allow "hide NEXT time" without hiding immediately
+  const [hideIntroNextTime, setHideIntroNextTime] = useState(false);
 
   const [insertAtIndex, setInsertAtIndex] = useState<number | null>(null);
   const [books, setBooks] = useState<MemoryBook[]>([]);
@@ -193,7 +195,10 @@ const App: React.FC = () => {
     }
 
     const savedHideIntro = localStorage.getItem('hide_intro');
-    if (savedHideIntro === 'true') setHideIntro(true);
+    if (savedHideIntro === 'true') {
+      setHideIntro(true);
+      setHideIntroNextTime(true);
+    }
   }, []);
 
   useEffect(() => {
@@ -208,9 +213,12 @@ const App: React.FC = () => {
     return () => { window.triggerShare = undefined; };
   }, []);
 
-  const toggleIntro = (hide: boolean) => {
-      setHideIntro(hide);
-      localStorage.setItem('hide_intro', String(hide));
+  const toggleIntroCheckbox = (shouldHide: boolean) => {
+      setHideIntroNextTime(shouldHide);
+      localStorage.setItem('hide_intro', String(shouldHide));
+      // Note: We do NOT update 'hideIntro' here, because we want it to hide "next time", 
+      // not immediately while the user is looking at it, unless we wanted instant feedback. 
+      // The requirement says "nästa gång" (next time).
   };
 
   // STRICT FOLDER CREATION LOGIC
@@ -302,9 +310,7 @@ const App: React.FC = () => {
      } else if (currentBook) {
          setCurrentBook(null);
      } else {
-         // Return to Dashboard (Home) if in some other state, or logout?
-         // Actually, logo click should just go to dashboard if logged in.
-         setCurrentBook(null);
+         setCurrentBook(null); // Already on Dashboard
      }
   };
 
@@ -321,39 +327,46 @@ const App: React.FC = () => {
       }
 
       if (!currentBook) {
-          // DASHBOARD + OPTIONAL INTRO TEXT
+          // DASHBOARD + OPTIONAL INTRO TEXT (Split Screen)
           return (
-            <div className="flex flex-col h-full max-w-7xl mx-auto px-4 md:px-8 py-8 w-full">
+            <div className="flex flex-col lg:flex-row h-full w-full overflow-hidden bg-[#f8fafc]">
                 
-                {/* Intro Text Block - Shown if not hidden */}
-                {!hideIntro && (
-                    <div className="mb-12 relative group animate-in slide-in-from-top-4">
-                        <LandingPage 
-                             isGoogleReady={true} 
-                             googleLoadError={false} 
-                             isAuthenticated={false} // Pass false to hide the "Logged in" banner inside component
+                {/* Left Column: Books */}
+                <div className={`flex-1 overflow-y-auto p-4 md:p-8 ${!hideIntro ? 'lg:border-r border-slate-200' : ''}`}>
+                    <div className="max-w-7xl mx-auto w-full">
+                        <Dashboard 
+                            books={books} 
+                            onCreateNew={handleCreateBook} 
+                            onOpenBook={setCurrentBook} 
+                            onUpdateBooks={handleUpdateBooks}
                         />
-                        <div className="absolute top-4 right-4 md:top-8 md:right-12">
-                             <label className="flex items-center space-x-2 text-xs font-bold text-slate-400 bg-white/80 backdrop-blur px-3 py-1.5 rounded-full cursor-pointer hover:text-slate-600 transition-colors shadow-sm border border-slate-100">
-                                 <input type="checkbox" onChange={(e) => toggleIntro(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                    </div>
+                </div>
+                
+                {/* Right Column: Intro Text (if enabled) */}
+                {!hideIntro && (
+                    <div className="w-full lg:w-[45%] xl:w-[40%] bg-white shadow-inner lg:shadow-none flex flex-col shrink-0 overflow-hidden border-t lg:border-t-0 border-slate-200">
+                         <div className="flex-1 overflow-y-auto custom-scrollbar">
+                             <LandingPage 
+                                 isGoogleReady={true} 
+                                 googleLoadError={false} 
+                                 isAuthenticated={false} // Pass false to hide the "Logged in" banner inside component
+                                 compact={true} // New prop to remove excess padding
+                            />
+                         </div>
+                         <div className="p-6 border-t border-slate-100 bg-slate-50 shrink-0">
+                             <label className="flex items-center space-x-3 text-sm font-bold text-slate-500 cursor-pointer hover:text-slate-800 transition-colors select-none">
+                                 <input 
+                                    type="checkbox" 
+                                    checked={hideIntroNextTime}
+                                    onChange={(e) => toggleIntroCheckbox(e.target.checked)} 
+                                    className="w-5 h-5 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300" 
+                                 />
                                  <span>Dölj introduktionstexten nästa gång</span>
                              </label>
-                        </div>
+                         </div>
                     </div>
                 )}
-                
-                {/* Divider if intro is shown */}
-                {!hideIntro && <div className="h-px bg-slate-200 w-full mb-12"></div>}
-
-                {/* Main Dashboard Grid */}
-                <div className="flex-1 w-full pb-20">
-                    <Dashboard 
-                        books={books} 
-                        onCreateNew={handleCreateBook} 
-                        onOpenBook={setCurrentBook} 
-                        onUpdateBooks={handleUpdateBooks}
-                    />
-                </div>
             </div>
           );
       }

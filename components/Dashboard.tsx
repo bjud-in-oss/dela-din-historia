@@ -65,24 +65,32 @@ const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, o
 
   return (
     <div className="w-full h-full" onClick={() => setSelectedBookIds(new Set())}>
-        <header className="mb-12 flex items-center space-x-4">
-          <div className="shrink-0">
-             {/* Phase 1 Icon ("Samla minnen") next to header */}
-             <AppLogo variant="phase1" className="w-16 h-16" />
+        <header className="mb-8 md:mb-12 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center space-x-4">
+            <div className="shrink-0">
+               <AppLogo variant="phase1" className="w-16 h-16" />
+            </div>
+            <div>
+                <h2 className="text-2xl md:text-3xl font-serif font-bold text-slate-900 mb-1">Senaste böckerna</h2>
+                <p className="text-sm text-slate-500">Dina pågående berättelser och familjeminnen.</p>
+            </div>
           </div>
-          <div>
-              <h2 className="text-3xl font-serif font-bold text-slate-900 mb-1">Senaste böckerna</h2>
-              <p className="text-slate-500">Dina pågående berättelser och familjeminnen.</p>
+          
+          <div className="flex items-center space-x-6 self-end md:self-auto">
+             {selectedBookIds.size > 0 && (
+                 <div className="text-indigo-600 font-bold animate-in fade-in">
+                     {selectedBookIds.size} markerade
+                 </div>
+             )}
+             <button className="text-sm font-bold text-slate-400 hover:text-indigo-600 transition-colors flex items-center space-x-1">
+                 <span>Visa alla</span>
+                 <i className="fas fa-chevron-right text-xs"></i>
+             </button>
           </div>
-          {selectedBookIds.size > 0 && (
-             <div className="text-indigo-600 font-bold animate-in fade-in ml-auto">
-                 {selectedBookIds.size} markerade
-             </div>
-          )}
         </header>
 
-        {/* Bigger Grid: Start with md:grid-cols-2 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-8">
+        {/* Bigger Grid: Start with md:grid-cols-2. Adjusted to fit well in split view. */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 2xl:grid-cols-3 gap-6 md:gap-8">
           
           {/* Create New Card - ALWAYS FIRST */}
           <button 
