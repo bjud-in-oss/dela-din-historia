@@ -78,51 +78,36 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
     
     const needsSplit = chunks.length > 1;
 
-    const handleExport = async (mode: 'download' | 'drive') => {
+    const handleExport = async () => {
         setIsExporting(true);
         try {
-            if (mode === 'download') {
-                if (chunks.length === 1) {
-                    setProgress({ current: 0, total: 100, msg: 'Genererar PDF...' });
-                    const pdfBytes = await generateCombinedPDF(accessToken, chunks[0].items, chunks[0].title, settings.compressionLevel);
-                    const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
-                    const url = window.URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `${chunks[0].title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`;
-                    a.click();
-                } else {
-                    // ZIP Export for multiple chunks
-                    setProgress({ current: 0, total: chunks.length, msg: 'Genererar ZIP-arkiv...' });
-                    const zip = new JSZip();
-                    
-                    for (let i = 0; i < chunks.length; i++) {
-                        setProgress({ current: i + 1, total: chunks.length, msg: `Genererar del ${i + 1} av ${chunks.length}...` });
-                        const pdfBytes = await generateCombinedPDF(accessToken, chunks[i].items, chunks[i].title, settings.compressionLevel);
-                        zip.file(`${chunks[i].title}.pdf`, pdfBytes);
-                    }
-                    
-                    setProgress({ current: 100, total: 100, msg: 'Komprimerar...' });
-                    const content = await zip.generateAsync({ type: 'blob' });
-                    const url = window.URL.createObjectURL(content);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `${bookTitle.replace(/[^a-z0-9]/gi, '_')}_Archive.zip`;
-                    a.click();
-                }
+            if (chunks.length === 1) {
+                setProgress({ current: 0, total: 100, msg: 'Genererar PDF...' });
+                const pdfBytes = await generateCombinedPDF(accessToken, chunks[0].items, chunks[0].title, settings.compressionLevel);
+                const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${chunks[0].title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`;
+                a.click();
             } else {
-                // Drive Export
-                setProgress({ current: 0, total: chunks.length, msg: 'Skapar mapp...' });
-                const baseName = bookTitle || 'Min Historia';
-                const folderId = await createFolder(accessToken, 'root', `Dela din historia - ${baseName}`);
-
+                // ZIP Export for multiple chunks
+                setProgress({ current: 0, total: chunks.length, msg: 'Genererar ZIP-arkiv...' });
+                const zip = new JSZip();
+                
                 for (let i = 0; i < chunks.length; i++) {
-                    setProgress({ current: i + 1, total: chunks.length, msg: `Laddar upp del ${i + 1} av ${chunks.length}...` });
+                    setProgress({ current: i + 1, total: chunks.length, msg: `Genererar del ${i + 1} av ${chunks.length}...` });
                     const pdfBytes = await generateCombinedPDF(accessToken, chunks[i].items, chunks[i].title, settings.compressionLevel);
-                    const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
-                    await uploadToDrive(accessToken, folderId, `${chunks[i].title}.pdf`, blob);
+                    zip.file(`${chunks[i].title}.pdf`, pdfBytes);
                 }
-                alert(`Export klar! ${chunks.length} filer sparades i mappen "Dela din historia - ${baseName}".`);
+                
+                setProgress({ current: 100, total: 100, msg: 'Komprimerar...' });
+                const content = await zip.generateAsync({ type: 'blob' });
+                const url = window.URL.createObjectURL(content);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${bookTitle.replace(/[^a-z0-9]/gi, '_')}_Archive.zip`;
+                a.click();
             }
         } catch (e) {
             console.error(e);
@@ -156,7 +141,7 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                             <h3 className="font-bold text-amber-900">Boken har delats upp i {chunks.length} delar</h3>
                             <p className="text-sm text-amber-800 mt-1 mb-3">
                                 För att möta gränsen på {settings.maxChunkSizeMB} MB per fil har vi automatiskt delat upp din bok. 
-                                Du kan ladda ner alla delar som ett ZIP-arkiv eller spara dem i en mapp på Drive.
+                                Du kan ladda ner alla delar som ett ZIP-arkiv. Alla delar är redan sparade på din Drive.
                             </p>
                             
                             {/* Precision Meter */}
@@ -191,7 +176,7 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                          <div className="flex-1 w-full">
                             <h3 className="font-bold text-emerald-900">Optimerad storlek</h3>
                             <p className="text-sm text-emerald-800 mb-3">
-                                Din bok ({chunks[0]?.estimatedSizeMB.toFixed(1)} MB) är redo att laddas upp som en enda fil.
+                                Din bok ({chunks[0]?.estimatedSizeMB.toFixed(1)} MB) är redo. Den är redan sparad på din Drive.
                             </p>
 
                             {/* Precision Meter for Single Chunk */}
@@ -220,20 +205,12 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                         </div>
                         <div className="mt-6 md:mt-0 flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4">
                             <button 
-                                onClick={() => handleExport('download')}
+                                onClick={handleExport}
                                 disabled={isExporting} 
                                 className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-4 rounded-xl font-bold shadow-lg shadow-indigo-900/50 transition-all flex items-center justify-center space-x-3 disabled:opacity-50 hover:-translate-y-1"
                             >
                                 {isExporting ? <i className="fas fa-circle-notch fa-spin"></i> : (needsSplit ? <i className="fas fa-file-zipper text-xl"></i> : <i className="fas fa-file-download text-xl"></i>)}
                                 <span>{needsSplit ? 'Ladda ner ZIP' : 'Ladda ner PDF'}</span>
-                            </button>
-                            <button 
-                                onClick={() => handleExport('drive')}
-                                disabled={isExporting}
-                                className="bg-white/10 hover:bg-white/20 text-white px-8 py-4 rounded-xl font-bold backdrop-blur-sm transition-all flex items-center justify-center space-x-3 disabled:opacity-50 hover:-translate-y-1 border border-white/20"
-                            >
-                                <i className="fab fa-google-drive text-xl"></i>
-                                <span>Spara till Drive</span>
                             </button>
                         </div>
                     </div>

@@ -19,11 +19,19 @@ const stringToColor = (str: string) => {
 };
 
 const CHUNK_COLORS = [
-    'bg-indigo-600',
-    'bg-emerald-600',
-    'bg-amber-600',
-    'bg-rose-600',
-    'bg-cyan-600'
+    'bg-indigo-500',
+    'bg-emerald-500',
+    'bg-amber-500',
+    'bg-rose-500',
+    'bg-cyan-500'
+];
+
+const CHUNK_BORDER_COLORS = [
+    'border-indigo-200',
+    'border-emerald-200',
+    'border-amber-200',
+    'border-rose-200',
+    'border-cyan-200'
 ];
 
 interface StoryEditorProps {
@@ -56,8 +64,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
-  const [precision, setPrecision] = useState(0);
-  const [statusMessage, setStatusMessage] = useState<string>('');
+  const [activeChunkFilter, setActiveChunkFilter] = useState<number | null>(null);
 
   // Sync State
   const [syncedHashes, setSyncedHashes] = useState<Map<number, string>>(new Map());
@@ -70,23 +77,17 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
      const processQueue = async () => {
          if (isCancelled) return;
          
-         // Find ONE item that needs processing (Image or PDF without page count)
+         // Find ONE item that needs processing
          const itemToProcess = items.find(item => 
              (item.type === FileType.IMAGE && (!item.processedBuffer || item.compressionLevelUsed !== settings.compressionLevel)) ||
              (item.type === FileType.PDF && item.pageCount === undefined)
          );
 
-         if (!itemToProcess) {
-             if (statusMessage.startsWith("Optimerar")) setStatusMessage(""); 
-             return;
-         }
-
-         setStatusMessage(`Optimerar: ${itemToProcess.name}...`);
+         if (!itemToProcess) return;
 
          try {
             const { buffer, size } = await processFileForCache(itemToProcess, accessToken, settings.compressionLevel);
             
-            // If it's a PDF or Google Doc, count pages
             let pageCount = itemToProcess.pageCount;
             if ((itemToProcess.type === FileType.PDF || itemToProcess.type === FileType.GOOGLE_DOC) && !pageCount) {
                 pageCount = await getPdfPageCount(new Blob([buffer as any], {type: 'application/pdf'}));
@@ -110,23 +111,14 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
          }
      };
 
-     // Calculate Precision
-     const images = items.filter(i => i.type === FileType.IMAGE);
-     if (images.length === 0) setPrecision(100);
-     else {
-        const processed = images.filter(i => i.processedSize && i.compressionLevelUsed === settings.compressionLevel);
-        const p = Math.round((processed.length / images.length) * 100);
-        setPrecision(p);
-     }
-
-     const timer = setTimeout(processQueue, 500); // 500ms delay between items
+     const timer = setTimeout(processQueue, 200); 
      return () => { isCancelled = true; clearTimeout(timer); };
   }, [items, settings.compressionLevel, accessToken]); 
 
   // --- 2. CHUNK CALCULATION ---
   const { chunkMap, chunkList } = useMemo(() => {
       const chunks = calculateChunks(items, bookTitle, settings.maxChunkSizeMB, settings.compressionLevel, settings.safetyMarginPercent);
-      const map = new Map<string, { chunkIndex: number, isStart: boolean, isTooLarge: boolean, title: string, isFullyOptimized: boolean }>();
+      const map = new Map<string, { chunkIndex: number, isStart: boolean, isTooLarge: boolean, title: string, isFullyOptimized: boolean, colorClass: string }>();
       const effectiveLimit = settings.maxChunkSizeMB * (1 - (settings.safetyMarginPercent / 100));
 
       chunks.forEach((chunk, cIdx) => {
@@ -134,7 +126,14 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
               const multiplier = item.type === FileType.IMAGE ? 1.0 : 1.0; 
               const sizeMB = ((item.processedSize || item.size || 0) * multiplier) / (1024 * 1024);
               const isTooLarge = sizeMB > effectiveLimit;
-              map.set(item.id, { chunkIndex: cIdx, isStart: iIdx === 0, isTooLarge, title: chunk.title, isFullyOptimized: chunk.isFullyOptimized });
+              map.set(item.id, { 
+                  chunkIndex: cIdx, 
+                  isStart: iIdx === 0, 
+                  isTooLarge, 
+                  title: chunk.title, 
+                  isFullyOptimized: chunk.isFullyOptimized,
+                  colorClass: CHUNK_COLORS[cIdx % CHUNK_COLORS.length]
+              });
           });
       });
       return { chunkMap: map, chunkList: chunks };
@@ -148,39 +147,25 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
           for (const chunk of chunkList) {
               const partNum = chunk.partNumber;
               const lastHash = syncedHashes.get(partNum);
-              
               const isReadyToUpload = syncStatus[partNum] !== 'uploading';
 
               if (isReadyToUpload && chunk.contentHash !== lastHash) {
-                  
                   setSyncStatus(prev => ({ ...prev, [partNum]: 'uploading' }));
-                  setStatusMessage(chunk.isFullyOptimized ? `Synkar slutgiltig PDF: ${chunk.title}...` : `Sparar utkast: ${chunk.title}...`);
-                  
                   try {
                       const pdfBytes = await generateCombinedPDF(accessToken, chunk.items, chunk.title, settings.compressionLevel);
                       const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
-                      
                       await uploadToDrive(accessToken, currentBook.driveFolderId!, `${chunk.title}.pdf`, blob);
-                      
                       setSyncedHashes(prev => new Map(prev).set(partNum, chunk.contentHash));
                       setSyncStatus(prev => ({ ...prev, [partNum]: 'synced' }));
-                      setStatusMessage(`Sparad: ${chunk.title}`);
                   } catch (e) {
                       console.error(`Failed to sync ${chunk.title}`, e);
                       setSyncStatus(prev => ({ ...prev, [partNum]: 'dirty' }));
-                      setStatusMessage(`Fel vid sparning: ${chunk.title}`);
                   }
-                  
-                  // Wait a bit before next chunk to not flood network
                   await new Promise(r => setTimeout(r, 1000));
               } 
           }
-          // Clear status if nothing is happening
-          const uploading = Object.values(syncStatus).some(s => s === 'uploading');
-          if (!uploading && statusMessage.startsWith("Sparar")) setStatusMessage("");
       };
-
-      const t = setTimeout(syncChunks, 2000); // 2s debounce
+      const t = setTimeout(syncChunks, 2000); 
       return () => clearTimeout(t);
   }, [chunkList, currentBook.driveFolderId, syncedHashes, settings.compressionLevel, bookTitle]);
 
@@ -242,8 +227,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
         const mergedBlob = await mergeFilesToPdf(itemsToMerge, accessToken, settings.compressionLevel);
         const mergedUrl = URL.createObjectURL(mergedBlob);
         const count = await getPdfPageCount(mergedBlob); 
-        
-        // Generate a thumbnail for the merged file immediately so it looks good
         const thumbUrl = await generatePageThumbnail(mergedBlob, 0);
 
         const newItem: DriveFile = {
@@ -271,7 +254,10 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       const maxIndex = Math.max(...indexes);
       if (maxIndex !== -1) onOpenSourceSelector(maxIndex + 1);
   };
-  const isAnyUploading = Object.values(syncStatus).some(s => s === 'uploading');
+
+  const filteredItems = activeChunkFilter !== null 
+     ? items.filter(item => chunkMap.get(item.id)?.chunkIndex === activeChunkFilter)
+     : items;
 
   if (showShareView) {
       return (
@@ -281,9 +267,9 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
   return (
     <>
-      <div className="h-full overflow-y-auto bg-[#f0f2f5] scroll-smooth relative" onClick={() => setSelectedIds(new Set())}>
+      <div className="flex h-full bg-[#f0f2f5] overflow-hidden" onClick={() => setSelectedIds(new Set())}>
          {isProcessing && (
-            <div className="fixed inset-0 z-50 bg-white/80 backdrop-blur-sm flex items-center justify-center">
+            <div className="fixed inset-0 z-[60] bg-white/80 backdrop-blur-sm flex items-center justify-center">
                 <div className="flex flex-col items-center">
                     <i className="fas fa-circle-notch fa-spin text-4xl text-indigo-600 mb-4"></i>
                     <p className="font-bold text-slate-700">Bearbetar...</p>
@@ -291,90 +277,126 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
             </div>
          )}
          
-         <div className="pb-48 px-4 max-w-7xl mx-auto pt-8">
-            {selectedIds.size > 0 && (
-                <div className="fixed bottom-24 left-1/2 transform -translate-x-1/2 bg-slate-900 text-white px-6 py-3 rounded-full shadow-2xl z-40 flex items-center space-x-4 animate-in slide-in-from-bottom-4">
-                    <span className="font-bold text-sm whitespace-nowrap">{selectedIds.size} valda</span>
-                    <div className="h-4 w-px bg-slate-700"></div>
-                    <button onClick={(e) => { e.stopPropagation(); handleInsertAfterSelection(); }} className="hover:text-emerald-400 font-bold text-xs flex items-center space-x-1 whitespace-nowrap"><i className="fas fa-plus-circle"></i> <span>Lägg till</span></button>
-                    {selectedIds.size > 1 && <button onClick={handleMergeItems} className="hover:text-indigo-300 font-bold text-xs flex items-center space-x-1 whitespace-nowrap"><i className="fas fa-object-group"></i> <span>Slå ihop</span></button>}
-                    <button onClick={() => { onUpdateItems(items.filter(i => !selectedIds.has(i.id))); setSelectedIds(new Set()); }} className="hover:text-red-400 font-bold text-xs flex items-center space-x-1 whitespace-nowrap"><i className="fas fa-trash"></i> <span>Ta bort</span></button>
-                    <button onClick={() => setSelectedIds(new Set())} className="ml-2 hover:text-slate-300"><i className="fas fa-times"></i></button>
+         {/* LEFT: INPUT (Samlade minnen) */}
+         <div className="flex-1 overflow-y-auto scroll-smooth relative border-r border-slate-200">
+             <div className="p-8 pb-32">
+                <div className="flex justify-between items-end mb-6">
+                    <div>
+                        <h2 className="text-2xl font-serif font-bold text-slate-800">Samlade minnen</h2>
+                        <p className="text-xs text-slate-500 font-medium mt-1">
+                            {activeChunkFilter !== null ? `Visar endast del ${activeChunkFilter + 1}` : 'Alla objekt'}
+                        </p>
+                    </div>
+                    {activeChunkFilter !== null && (
+                        <button onClick={() => setActiveChunkFilter(null)} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded-full font-bold text-slate-600">
+                            Visa alla
+                        </button>
+                    )}
                 </div>
-            )}
 
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 select-none">
-            {items.map((item, index) => {
-                const chunkInfo = chunkMap.get(item.id);
-                return (
-                    <Tile 
-                        key={item.id} id={`tile-${item.id}`} item={item} index={index}
-                        isSelected={selectedIds.has(item.id)}
-                        onClick={(e: React.MouseEvent) => handleSelection(e, item, index)}
-                        onEdit={() => setEditingItem(item)}
-                        onSplit={() => handleSplitPdf(item, index)}
-                        onRemove={() => onUpdateItems(items.filter(i => i.id !== item.id))}
-                        onDragStart={(e: any) => handleDragStart(e, index)}
-                        onDragOver={(e: any) => handleDragOver(e, index)}
-                        chunkInfo={chunkInfo}
-                    />
-                );
-            })}
-            <button 
-                onClick={() => onOpenSourceSelector(null)}
-                className="aspect-[210/297] rounded-lg border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-300 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all group"
-            >
-                <div className="w-12 h-12 rounded-full bg-slate-50 group-hover:bg-white group-hover:shadow-md flex items-center justify-center mb-2 transition-all"><i className="fas fa-plus text-xl"></i></div>
-                <span className="text-xs font-bold uppercase tracking-wider">Lägg till sida</span>
-            </button>
-            </div>
+                {selectedIds.size > 0 && (
+                    <div className="sticky top-4 z-40 bg-slate-900 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center justify-between animate-in slide-in-from-top-4 mb-6 mx-auto max-w-lg">
+                        <span className="font-bold text-sm">{selectedIds.size} valda</span>
+                        <div className="flex space-x-4">
+                            <button onClick={(e) => { e.stopPropagation(); handleInsertAfterSelection(); }} className="hover:text-emerald-400 font-bold text-xs flex items-center space-x-1"><i className="fas fa-plus-circle"></i> <span>Lägg till</span></button>
+                            {selectedIds.size > 1 && <button onClick={handleMergeItems} className="hover:text-indigo-300 font-bold text-xs flex items-center space-x-1"><i className="fas fa-object-group"></i> <span>Slå ihop</span></button>}
+                            <button onClick={() => { onUpdateItems(items.filter(i => !selectedIds.has(i.id))); setSelectedIds(new Set()); }} className="hover:text-red-400 font-bold text-xs flex items-center space-x-1"><i className="fas fa-trash"></i> <span>Ta bort</span></button>
+                        </div>
+                    </div>
+                )}
+
+                <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 select-none">
+                {filteredItems.map((item, index) => {
+                    // We need original index for correct dragging if filtered
+                    const originalIndex = items.findIndex(i => i.id === item.id);
+                    const chunkInfo = chunkMap.get(item.id);
+                    return (
+                        <Tile 
+                            key={item.id} id={`tile-${item.id}`} item={item} index={originalIndex}
+                            isSelected={selectedIds.has(item.id)}
+                            onClick={(e: React.MouseEvent) => handleSelection(e, item, originalIndex)}
+                            onEdit={() => setEditingItem(item)}
+                            onSplit={() => handleSplitPdf(item, originalIndex)}
+                            onRemove={() => onUpdateItems(items.filter(i => i.id !== item.id))}
+                            onDragStart={(e: any) => handleDragStart(e, originalIndex)}
+                            onDragOver={(e: any) => handleDragOver(e, originalIndex)}
+                            chunkInfo={chunkInfo}
+                        />
+                    );
+                })}
+                <button 
+                    onClick={() => onOpenSourceSelector(null)}
+                    className="aspect-[210/297] rounded-lg border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-300 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all group"
+                >
+                    <div className="w-12 h-12 rounded-full bg-slate-50 group-hover:bg-white group-hover:shadow-md flex items-center justify-center mb-2 transition-all"><i className="fas fa-plus text-xl"></i></div>
+                    <span className="text-xs font-bold uppercase tracking-wider">Lägg till sida</span>
+                </button>
+                </div>
+             </div>
          </div>
 
-         {/* STATUS FOOTER */}
-         <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-200 p-2 z-30 flex items-center justify-between px-6 shadow-lg">
-             <div className="flex items-center space-x-4">
-                 <div className="flex flex-col">
-                    <span className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Antal delar (FamilySearch)</span>
-                    <span className="text-sm font-bold text-indigo-600">{chunkList.length} st filer</span>
-                 </div>
-                 
-                 {/* Detail Status Text */}
-                 {statusMessage ? (
-                    <div className="flex items-center space-x-2 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100 animate-in fade-in">
-                        <i className="fas fa-circle-notch fa-spin text-indigo-500 text-xs"></i>
-                        <span className="text-[10px] font-bold text-indigo-700 uppercase tracking-wide truncate max-w-[200px]">{statusMessage}</span>
-                    </div>
-                 ) : precision < 100 ? (
-                     <div className="hidden sm:flex items-center space-x-2 bg-amber-50 px-3 py-1 rounded-full border border-amber-100">
-                         <i className="fas fa-hourglass-half text-amber-500 text-xs"></i>
-                         <span className="text-[10px] font-bold text-amber-700 uppercase tracking-wide">Väntar på optimering: {precision}%</span>
-                     </div>
-                 ) : (
-                     <div className="hidden sm:flex items-center space-x-2 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
-                         <i className="fas fa-check text-emerald-500 text-xs"></i>
-                         <span className="text-[10px] font-bold text-emerald-700 uppercase tracking-wide">Alla filer klara</span>
-                     </div>
-                 )}
-
-                 {isAnyUploading ? (
-                     <div className="flex items-center space-x-2 bg-blue-50 px-3 py-1 rounded-full border border-blue-100">
-                         <i className="fas fa-cloud-upload-alt text-blue-500 animate-bounce text-xs"></i>
-                         <span className="text-[10px] font-bold text-blue-700 uppercase tracking-wide">Sparar till: {bookTitle}</span>
-                     </div>
-                 ) : (
-                     <div className="hidden sm:flex items-center space-x-2 opacity-50">
-                         <i className="fas fa-cloud text-slate-400 text-xs"></i>
-                         <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Sparat i molnet</span>
-                     </div>
-                 )}
+         {/* RIGHT: OUTPUT (Att dela) */}
+         <div className="w-80 bg-white border-l border-slate-200 shadow-xl z-20 flex flex-col shrink-0">
+             <div className="p-6 bg-slate-50 border-b border-slate-100">
+                 <h2 className="text-sm font-black text-slate-800 uppercase tracking-wide mb-1">Att dela till FamilySearch</h2>
+                 <p className="text-[10px] text-slate-500 font-medium">Boken delas automatiskt upp i {settings.maxChunkSizeMB} MB delar.</p>
              </div>
-             <div className="flex items-center space-x-2">
-                 {chunkList.length > 1 && (
-                     <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded">
-                         <i className="fas fa-info-circle mr-1"></i>
-                         Delas automatiskt vid {settings.maxChunkSizeMB} MB
-                     </span>
-                 )}
+             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50">
+                 {chunkList.map((chunk, idx) => {
+                     const status = syncStatus[chunk.partNumber] || 'waiting';
+                     const percentFilled = Math.min(100, (chunk.estimatedSizeMB / settings.maxChunkSizeMB) * 100);
+                     const colorClass = CHUNK_COLORS[idx % CHUNK_COLORS.length];
+                     const borderClass = CHUNK_BORDER_COLORS[idx % CHUNK_BORDER_COLORS.length];
+                     
+                     // Helper to extract just the CSS color var roughly
+                     const liquidColor = colorClass.replace('bg-', 'text-'); // simple hack for icon, logical css needs mapping
+
+                     return (
+                         <div 
+                            key={idx}
+                            onClick={() => setActiveChunkFilter(activeChunkFilter === idx ? null : idx)}
+                            className={`relative rounded-2xl overflow-hidden bg-white border-2 transition-all cursor-pointer hover:shadow-lg ${activeChunkFilter === idx ? 'ring-2 ring-offset-2 ring-indigo-500 border-indigo-500' : borderClass}`}
+                         >
+                             {/* Liquid Background Fill */}
+                             <div 
+                                className={`absolute bottom-0 left-0 right-0 transition-all duration-1000 ease-in-out opacity-10 ${colorClass}`}
+                                style={{ height: `${percentFilled}%` }}
+                             ></div>
+
+                             <div className="relative p-4 z-10">
+                                 <div className="flex justify-between items-start mb-2">
+                                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-sm ${colorClass}`}>
+                                         {idx + 1}
+                                     </div>
+                                     <div className="text-right">
+                                         <span className="text-xs font-bold text-slate-900 block">{chunk.estimatedSizeMB.toFixed(1)} MB</span>
+                                         <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">{Math.round(percentFilled)}% Full</span>
+                                     </div>
+                                 </div>
+                                 
+                                 <h3 className="text-xs font-bold text-slate-800 mb-1 truncate" title={chunk.title}>{chunk.title}</h3>
+                                 <p className="text-[10px] text-slate-500 mb-3">{chunk.items.length} sidor</p>
+
+                                 {/* Status Indicator */}
+                                 <div className="flex items-center space-x-2 text-[10px] font-bold uppercase tracking-wide">
+                                     {status === 'synced' ? (
+                                         <span className="text-emerald-600 flex items-center"><i className="fas fa-check-circle mr-1"></i> Sparad</span>
+                                     ) : status === 'uploading' ? (
+                                         <span className="text-blue-600 flex items-center"><i className="fas fa-circle-notch fa-spin mr-1"></i> Sparar...</span>
+                                     ) : chunk.isFullyOptimized ? (
+                                         <span className="text-amber-500 flex items-center"><i className="fas fa-clock mr-1"></i> Väntar</span>
+                                     ) : (
+                                         <span className="text-slate-400 flex items-center"><i className="fas fa-compress-arrows-alt fa-spin mr-1"></i> Optimerar...</span>
+                                     )}
+                                 </div>
+                             </div>
+                         </div>
+                     );
+                 })}
+             </div>
+             {/* Simple Legend/Footer for Output */}
+             <div className="p-4 bg-white border-t border-slate-100 text-center">
+                 <p className="text-[10px] text-slate-400 font-medium">Klicka på en del för att se innehållet.</p>
              </div>
          </div>
       </div>
@@ -397,7 +419,9 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove, onDragStart, onDragOver, chunkInfo }: any) => {
   const groupColor = stringToColor(item.id.split('-')[0] + (item.id.split('-')[1] || ''));
   const showSplit = (item.type === FileType.PDF || item.type === FileType.GOOGLE_DOC) && (item.pageCount === undefined || item.pageCount > 1);
-  const chunkColor = CHUNK_COLORS[(chunkInfo?.chunkIndex || 0) % CHUNK_COLORS.length];
+  // Use color from chunkInfo or default
+  const chunkColor = chunkInfo?.colorClass || 'bg-slate-400';
+  
   const displaySizeMB = item.processedSize ? (item.processedSize / (1024*1024)).toFixed(2) : ((item.size || 0) / (1024*1024)).toFixed(2);
   const isEdited = item.pageMeta && Object.keys(item.pageMeta).length > 0;
   const isCached = !!item.processedBuffer;
@@ -420,7 +444,7 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
           
           <div className="absolute top-2 left-2 flex flex-col gap-1 items-start z-20 pointer-events-none">
               <div className={`px-2 py-1 ${chunkColor} text-white rounded-md flex items-center justify-center text-[10px] font-bold shadow-sm`}>
-                 <span className="opacity-75 mr-1 text-[9px]">Del {(chunkInfo?.chunkIndex || 0) + 1}</span><span>#{index + 1}</span>
+                 <span className="opacity-90 text-[9px]">Del {(chunkInfo?.chunkIndex || 0) + 1}</span>
               </div>
               {chunkInfo?.isTooLarge && (<div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center shadow-lg animate-pulse" title="För stor"><i className="fas fa-exclamation text-white text-[10px]"></i></div>)}
           </div>
@@ -462,6 +486,7 @@ const RichTextListEditor = ({ lines, onChange, onFocusLine, focusedLineId }: { l
 };
 
 const EditModal = ({ item, accessToken, onClose, onUpdate, settings }: any) => {
+    // ... Existing EditModal code logic ...
     const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
     const [pageMeta, setPageMeta] = useState<Record<number, PageMetadata>>(item.pageMeta || {});
     const [activePageIndex, setActivePageIndex] = useState(0);
@@ -478,10 +503,7 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings }: any) => {
         const init = async () => {
              setIsLoadingPreview(true); setErrorMsg(null);
              try {
-                // Ensure we get a fresh buffer
                 const { buffer } = await processFileForCache(item, accessToken, settings.compressionLevel || 'medium');
-                
-                // CRITICAL FIX: Treat GOOGLE_DOC as PDF to avoid blob corruption
                 const isPdfType = item.type === FileType.PDF || item.type === FileType.GOOGLE_DOC;
                 const type = isPdfType ? 'application/pdf' : 'image/jpeg';
                 
@@ -514,8 +536,6 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings }: any) => {
             try {
                 onUpdate({ pageMeta });
                 const { buffer } = await processFileForCache(item, accessToken, settings.compressionLevel || 'medium');
-                
-                // CRITICAL FIX: Treat GOOGLE_DOC as PDF here too
                 const isPdfType = item.type === FileType.PDF || item.type === FileType.GOOGLE_DOC;
                 const type = isPdfType ? 'application/pdf' : 'image/jpeg';
 

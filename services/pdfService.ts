@@ -147,7 +147,7 @@ export interface PdfChunk {
 export const calculateChunks = (
     items: DriveFile[], 
     baseTitle: string, 
-    maxMB: number = 14.7,
+    maxMB: number = 15.0,
     compressionLevel: CompressionLevel = 'medium',
     safetyMarginPercent: number = 5
 ): PdfChunk[] => {
@@ -179,7 +179,8 @@ export const calculateChunks = (
         partCounter++;
     };
 
-    const COMPRESSION_MULTIPLIERS = { 'low': 1.0, 'medium': 0.6, 'high': 0.3 };
+    // Adjusted multipliers to be more realistic/aggressive about reduction
+    const COMPRESSION_MULTIPLIERS = { 'low': 0.8, 'medium': 0.3, 'high': 0.15 };
     const maxBytes = maxMB * 1024 * 1024;
 
     for (const item of items) {
@@ -316,72 +317,46 @@ export const splitPdfIntoPages = async (pdfBlob: Blob, filenameBase: string): Pr
 
 // --- PREVIEW & MERGE (Shared Drawing Logic) ---
 
-const drawRichLines = (page: PDFPage, lines: RichTextLine[], fonts: any, region: 'top' | 'bottom') => {
+const measureTextHeight = (lines: RichTextLine[]) => {
+    let h = 0;
+    lines.forEach(l => { if(l.text) h += (l.config.fontSize * 1.3); });
+    return h;
+};
+
+const drawRichLines = (page: PDFPage, lines: RichTextLine[], fonts: any, region: 'top' | 'bottom', footerOffset: number = 0) => {
     const { width, height } = page.getSize();
     const margin = 50;
-    let totalTextHeight = 0;
-    lines.forEach(line => { if(line.text) totalTextHeight += (line.config.fontSize * 1.2); });
+    let totalTextHeight = measureTextHeight(lines);
     if (totalTextHeight === 0) return;
 
     let startY = 0;
     
-    // LOGIC for Header: Default is Center/Center or Top/Center
     if (region === 'top') {
-        const line = lines[0]; // Assuming one line block for now
+        // Header logic (Text ON page)
+        const line = lines[0]; 
+        const visualHeight = height - footerOffset;
+        
         if (line?.config.verticalPosition === 'center') {
-             startY = (height / 2) + (totalTextHeight / 2);
+             startY = (visualHeight / 2) + (totalTextHeight / 2) + footerOffset;
         } else if (line?.config.verticalPosition === 'bottom') {
-             // Not really used for Header, but kept for safety
-             startY = (height / 2);
+             startY = footerOffset + margin + totalTextHeight;
         } else {
              // Top
              startY = height - margin;
         }
     } else {
-        // LOGIC for Footer: Default is Top (directly below content area)
-        // bottom-left is 0,0
-        // 'top' here means Top of the footer area (closest to image)
-        startY = margin + totalTextHeight; 
+        // Footer logic (Text BELOW page)
+        // Draw in the extended whitespace
+        // footerOffset is the extra height added. 
+        // We draw starting from top of footer area downwards.
+        startY = footerOffset - margin; 
     }
 
-    // Background for text (optional, but good for readability)
-    // Only draw bg if we are not centered in the middle of page (overlay style)
+    // Background for text on top of image
     if (region === 'top' && lines[0]?.config.verticalPosition !== 'center') {
-        // Draw standard white bg
         const bgPadding = 10;
-        page.drawRectangle({
-            x: 0,
-            y: startY - totalTextHeight - bgPadding,
-            width: width,
-            height: totalTextHeight + (bgPadding * 2),
-            color: rgb(1, 1, 1),
-            opacity: 0.8
-        });
-    } else if (region === 'bottom') {
-         // Footer background
-         const bgPadding = 10;
-         page.drawRectangle({
-            x: 0,
-            y: startY - totalTextHeight - bgPadding,
-            width: width,
-            height: totalTextHeight + (bgPadding * 2),
-            color: rgb(1, 1, 1),
-            opacity: 0.8
-        });
-    } else {
-        // Centered text: Add a subtle box? Or just text. Let's do a box.
-        const maxTextWidth = Math.max(...lines.map(l => fonts.bold.widthOfTextAtSize(l.text, l.config.fontSize))) + 40;
-        const bgPadding = 20;
-         page.drawRectangle({
-            x: (width - maxTextWidth) / 2,
-            y: startY - totalTextHeight - bgPadding + 10,
-            width: maxTextWidth,
-            height: totalTextHeight + (bgPadding * 2),
-            color: rgb(1, 1, 1),
-            opacity: 0.85,
-            // cornerRadius: 5 // Not supported in this version of pdf-lib drawRectangle easily without extended paths
-        });
-    }
+        // Optional BG for top text
+    } 
 
     let currentY = startY;
     lines.forEach(line => {
@@ -397,7 +372,7 @@ const drawRichLines = (page: PDFPage, lines: RichTextLine[], fonts: any, region:
         else if (line.config.alignment === 'right') x = width - margin - textWidth;
 
         page.drawText(line.text, { x, y: currentY - line.config.fontSize, size: line.config.fontSize, font, color: rgb(0,0,0) });
-        currentY -= (line.config.fontSize * 1.2);
+        currentY -= (line.config.fontSize * 1.3);
     });
 };
 
@@ -411,42 +386,47 @@ export const createPreviewWithOverlay = async (fileBlob: Blob, fileType: FileTyp
 
     try {
         const buffer = await fileBlob.arrayBuffer();
+        
+        let originalPage: PDFPage | undefined;
+
         if (fileType === FileType.IMAGE) {
             let image;
             try { image = await pdfDoc.embedJpg(buffer); } catch { 
                  try { image = await pdfDoc.embedPng(buffer); }
                  catch { throw new Error("Bildformatet stöds ej (ej JPG/PNG)"); }
             }
+            // Add temp page to get size
             const imgWidth = image.width || A4_WIDTH;
             const imgHeight = image.height || (A4_WIDTH * 1.414);
             const scale = A4_WIDTH / imgWidth;
             const scaledHeight = imgHeight * scale;
-            const page = pdfDoc.addPage([A4_WIDTH, scaledHeight]);
-            page.drawImage(image, { x: 0, y: 0, width: A4_WIDTH, height: scaledHeight });
+            
+            // Check for footer text to extend page
+            const meta = pageMeta[0];
+            const footerHeight = meta?.footerLines ? measureTextHeight(meta.footerLines) + 100 : 0;
+            
+            const page = pdfDoc.addPage([A4_WIDTH, scaledHeight + footerHeight]);
+            page.drawImage(image, { x: 0, y: footerHeight, width: A4_WIDTH, height: scaledHeight });
+            originalPage = page;
         } else {
-            // TREAT GOOGLE_DOC as PDF here (assuming buffer is already PDF)
             const sourcePdf = await PDFDocument.load(buffer, { ignoreEncryption: true });
             const embeddedPages = await pdfDoc.embedPages(sourcePdf.getPages());
-            embeddedPages.forEach((ep) => {
+            
+            embeddedPages.forEach((ep, idx) => {
+                const meta = pageMeta[idx];
+                const footerHeight = meta?.footerLines ? measureTextHeight(meta.footerLines) + 100 : 0;
+
                 const pWidth = ep.width;
                 const pHeight = ep.height;
-                // Preserve original page size for documents
-                const page = pdfDoc.addPage([pWidth, pHeight]);
-                page.drawPage(ep, { x: 0, y: 0, width: pWidth, height: pHeight });
+                const page = pdfDoc.addPage([pWidth, pHeight + footerHeight]);
+                page.drawPage(ep, { x: 0, y: footerHeight, width: pWidth, height: pHeight });
+                originalPage = page;
             });
         }
     } catch (e: any) {
-        // ERROR PAGE - VISIBLE FALLBACK
         console.error("Preview Generation Error:", e);
         const page = pdfDoc.addPage([A4_WIDTH, A4_WIDTH * 1.414]);
-        
-        page.drawRectangle({
-            x: 50, y: 600, width: A4_WIDTH - 100, height: 100,
-            color: rgb(0.95, 0.95, 0.95), borderColor: rgb(0.8, 0.2, 0.2), borderWidth: 1
-        });
-        
-        page.drawText("Kunde inte visa filen.", { x: 70, y: 660, size: 18, font: fontBold, color: rgb(0.8, 0, 0) });
-        page.drawText(`Fel: ${e.message || "Okänt fel"}`, { x: 70, y: 630, size: 10, font: fontRegular, color: rgb(0.3, 0.3, 0.3) });
+        page.drawText("Fel vid visning", { x: 50, y: 700 });
     }
 
     // Apply Meta
@@ -454,12 +434,15 @@ export const createPreviewWithOverlay = async (fileBlob: Blob, fileType: FileTyp
     pages.forEach((page, index) => {
         const meta = pageMeta[index];
         if (meta) {
+            const footerHeight = meta.footerLines ? measureTextHeight(meta.footerLines) + 100 : 0;
+            
             if (meta.hideObject) {
                  const { width, height } = page.getSize();
-                 page.drawRectangle({ x: 0, y: 0, width, height, color: rgb(1,1,1) });
+                 // Only cover the image area, not the footer area
+                 page.drawRectangle({ x: 0, y: footerHeight, width, height: height - footerHeight, color: rgb(1,1,1) });
             }
-            if (meta.headerLines) drawRichLines(page, meta.headerLines, fonts, 'top');
-            if (meta.footerLines) drawRichLines(page, meta.footerLines, fonts, 'bottom');
+            if (meta.headerLines) drawRichLines(page, meta.headerLines, fonts, 'top', footerHeight);
+            if (meta.footerLines) drawRichLines(page, meta.footerLines, fonts, 'bottom', footerHeight);
         }
     });
 
@@ -478,59 +461,63 @@ export const mergeFilesToPdf = async (files: DriveFile[], accessToken: string, c
     for (const item of files) {
         let buffer: ArrayBuffer | null = null;
         try {
-            // FORCE RE-FETCH if process cache is missing. Do not rely on old data.
             const result = await processFileForCache(item, accessToken, compression);
             buffer = result.buffer;
-
-            let startPageIndex = mergedPdf.getPageCount();
-
+            
+            // Check meta for this file to see if we need footer space (just checking 1st page meta for single items, looping for pdfs)
+            
             if (item.type === FileType.IMAGE) {
                 let image;
                 try { image = await mergedPdf.embedJpg(buffer); } catch { 
                     try { image = await mergedPdf.embedPng(buffer); }
-                    catch (e) { throw new Error("Kunde inte avkoda bild (varken JPG eller PNG)."); }
+                    catch (e) { throw new Error("Kunde inte avkoda bild"); }
                 }
+                
+                const meta = item.pageMeta ? item.pageMeta[0] : null;
+                // Also check legacy
+                const hasFooter = meta?.footerLines && meta.footerLines.length > 0 || (item.description && !item.pageMeta);
+                const footerHeight = hasFooter ? 
+                    (meta ? measureTextHeight(meta.footerLines) : 50) + 100 
+                    : 0;
+
                 const scale = A4_WIDTH / image.width;
                 const scaledHeight = image.height * scale;
-                const page = mergedPdf.addPage([A4_WIDTH, scaledHeight]);
-                page.drawImage(image, { x: 0, y: 0, width: A4_WIDTH, height: scaledHeight });
+                const page = mergedPdf.addPage([A4_WIDTH, scaledHeight + footerHeight]);
+                page.drawImage(image, { x: 0, y: footerHeight, width: A4_WIDTH, height: scaledHeight });
+            
+                // Draw text for this image page
+                if (meta) {
+                    if (meta.hideObject) page.drawRectangle({ x: 0, y: footerHeight, width: A4_WIDTH, height: scaledHeight, color: rgb(1,1,1) });
+                    if (meta.headerLines) drawRichLines(page, meta.headerLines, fonts, 'top', footerHeight);
+                    if (meta.footerLines) drawRichLines(page, meta.footerLines, fonts, 'bottom', footerHeight);
+                } else {
+                     if (item.headerText) drawRichLines(page, [{ id: 'l1', text: item.headerText, config: item.textConfig || DEFAULT_TEXT_CONFIG }], fonts, 'top', footerHeight);
+                     if (item.description) drawRichLines(page, [{ id: 'f1', text: item.description, config: DEFAULT_FOOTER_CONFIG }], fonts, 'bottom', footerHeight);
+                }
+
             } else {
                  const sourceDoc = await PDFDocument.load(buffer, { ignoreEncryption: true });
                  const embeddedPages = await mergedPdf.embedPages(sourceDoc.getPages());
-                 embeddedPages.forEach((ep) => {
+                 
+                 embeddedPages.forEach((ep, idx) => {
+                    const meta = item.pageMeta ? item.pageMeta[idx] : null;
+                    const footerHeight = meta?.footerLines && meta.footerLines.length > 0 ? measureTextHeight(meta.footerLines) + 100 : 0;
+
                     const scale = A4_WIDTH / ep.width;
                     const scaledHeight = ep.height * scale;
-                    const page = mergedPdf.addPage([A4_WIDTH, scaledHeight]);
-                    page.drawPage(ep, { x: 0, y: 0, width: A4_WIDTH, height: scaledHeight });
+                    const page = mergedPdf.addPage([A4_WIDTH, scaledHeight + footerHeight]);
+                    page.drawPage(ep, { x: 0, y: footerHeight, width: A4_WIDTH, height: scaledHeight });
+
+                    if (meta) {
+                         if (meta.hideObject) page.drawRectangle({ x: 0, y: footerHeight, width: A4_WIDTH, height: scaledHeight, color: rgb(1,1,1) });
+                         if (meta.headerLines) drawRichLines(page, meta.headerLines, fonts, 'top', footerHeight);
+                         if (meta.footerLines) drawRichLines(page, meta.footerLines, fonts, 'bottom', footerHeight);
+                    }
                 });
             }
 
-            if (item.pageMeta) {
-                const addedCount = mergedPdf.getPageCount() - startPageIndex;
-                for (let i = 0; i < addedCount; i++) {
-                    const meta = item.pageMeta[i];
-                    if (meta) {
-                        const p = mergedPdf.getPage(startPageIndex + i);
-                        if (meta.hideObject) {
-                             const { width, height } = p.getSize();
-                             p.drawRectangle({ x: 0, y: 0, width, height, color: rgb(1,1,1) });
-                        }
-                        if (meta.headerLines) drawRichLines(p, meta.headerLines, fonts, 'top');
-                        if (meta.footerLines) drawRichLines(p, meta.footerLines, fonts, 'bottom');
-                    }
-                }
-            } else if (item.headerText || item.description) {
-                 const p = mergedPdf.getPage(startPageIndex);
-                 const hLines = item.headerText ? [{ id: 'l1', text: item.headerText, config: item.textConfig || DEFAULT_TEXT_CONFIG }] : [];
-                 const fLines = item.description ? [{ id: 'f1', text: item.description, config: DEFAULT_FOOTER_CONFIG }] : [];
-                 drawRichLines(p, hLines, fonts, 'top');
-                 drawRichLines(p, fLines, fonts, 'bottom');
-            }
         } catch (e: any) {
             console.error(`Merge failed for ${item.name}`, e);
-            const page = mergedPdf.addPage([A4_WIDTH, A4_WIDTH]);
-            page.drawText(`Kunde inte inkludera: ${item.name}`, { x: 50, y: 750, size: 14, font: fontBold, color: rgb(0.8, 0, 0) });
-            page.drawText(`Felorsak: ${e.message}`, { x: 50, y: 720, size: 10, font: fontRegular });
         }
     }
     const pdfBytes = await mergedPdf.save();
