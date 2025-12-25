@@ -73,20 +73,32 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                 
                 {/* Header with Close */}
                 <div className="flex justify-between items-center mb-8">
-                    <div className="flex items-center space-x-3">
-                         <AppLogo variant="phase3" className="w-10 h-10" />
+                    <div className="flex items-center space-x-4">
+                         <div className="shrink-0">
+                            <AppLogo variant="phase3" className="w-16 h-16" />
+                         </div>
                          <h1 className="text-2xl font-serif font-bold text-slate-900">Dela på FamilySearch</h1>
                     </div>
                 </div>
 
-                {/* Main Summary Card (Moved Up) */}
+                {/* Main Download Card */}
                 <div className="bg-slate-900 rounded-[1.5rem] shadow-xl overflow-hidden mb-12 border border-slate-900 relative">
                     <div className="p-8 text-white flex flex-col md:flex-row items-center justify-between">
                         <div>
-                             <h2 className="text-xl font-bold mb-1">Boken "{bookTitle}"</h2>
+                             <h2 className="text-xl font-bold mb-1">Ladda ned boken "{bookTitle}"</h2>
                              <p className="opacity-80 font-serif italic text-sm">
                                  {items.length} sidor över {chunks.length} filer • Redo att dela med framtida generationer
                              </p>
+                        </div>
+                        <div className="mt-6 md:mt-0">
+                            <button 
+                                onClick={handleExport}
+                                disabled={isExporting} 
+                                className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-4 rounded-xl font-bold shadow-lg shadow-indigo-900/50 transition-all flex items-center justify-center space-x-3 disabled:opacity-50 hover:-translate-y-1"
+                            >
+                                {isExporting ? <i className="fas fa-circle-notch fa-spin"></i> : (needsSplit ? <i className="fas fa-file-zipper text-xl"></i> : <i className="fas fa-file-download text-xl"></i>)}
+                                <span>{needsSplit ? 'Ladda ner ZIP' : 'Ladda ner PDF'}</span>
+                            </button>
                         </div>
                     </div>
                     {isExporting && (
@@ -96,10 +108,10 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                     )}
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
                     
                     {/* Alternatives Column (2/3 width) */}
-                    <div className="lg:col-span-2 space-y-8">
+                    <div className="xl:col-span-2 space-y-8">
                         
                         {/* PRIVAT DELNING */}
                         <div>
@@ -165,17 +177,6 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                                     }}
                                 />
                             </div>
-                        </div>
-
-                         <div className="pt-4 border-t border-slate-100 flex justify-end">
-                            <button 
-                                onClick={handleExport}
-                                disabled={isExporting} 
-                                className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-4 rounded-xl font-bold shadow-lg shadow-indigo-900/50 transition-all flex items-center justify-center space-x-3 disabled:opacity-50 hover:-translate-y-1"
-                            >
-                                {isExporting ? <i className="fas fa-circle-notch fa-spin"></i> : (needsSplit ? <i className="fas fa-file-zipper text-xl"></i> : <i className="fas fa-share-square text-xl"></i>)}
-                                <span>Dela boken (Ladda ner)</span>
-                            </button>
                         </div>
                     </div>
 

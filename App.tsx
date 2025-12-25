@@ -51,7 +51,10 @@ const App: React.FC = () => {
     activeTab: 'local' as 'local' | 'drive' | 'shared'
   });
   
-  const googleBtnRef = useRef<HTMLDivElement>(null);
+  // Refs for Google Buttons (Desktop vs Mobile)
+  const headerGoogleBtnDesktopRef = useRef<HTMLDivElement>(null); 
+  const headerGoogleBtnMobileRef = useRef<HTMLDivElement>(null);
+  
   const tokenClientRef = useRef<any>(null);
 
   const decodeJwt = (token: string) => {
@@ -134,20 +137,36 @@ const App: React.FC = () => {
     };
   }, [isGoogleReady]);
 
+  // Render buttons when ready
   useEffect(() => {
-    if (isGoogleReady && googleBtnRef.current && !user) {
+    if (isGoogleReady && !isAuthenticated) {
       try {
-        window.google.accounts.id.renderButton(googleBtnRef.current, { 
-          theme: "outline", 
-          size: "large", 
-          shape: "pill",
-          width: 280
-        });
+        // Render Desktop Button (Large width, "Sign in with Google")
+        if (headerGoogleBtnDesktopRef.current) {
+            window.google.accounts.id.renderButton(headerGoogleBtnDesktopRef.current, { 
+                theme: "outline", 
+                size: "large", 
+                shape: "pill",
+                width: 250,
+                text: "signin_with" // Default: "Logga in med Google"
+            });
+        }
+        
+        // Render Mobile Button (Small width, "Sign in")
+        if (headerGoogleBtnMobileRef.current) {
+            window.google.accounts.id.renderButton(headerGoogleBtnMobileRef.current, { 
+                theme: "outline", 
+                size: "large", 
+                shape: "pill",
+                width: 120, // Smaller width
+                text: "signin" // Renders "Logga in"
+            });
+        }
       } catch (e) {
         console.error("Kunde inte rendera Google-knappen", e);
       }
     }
-  }, [isGoogleReady, user]);
+  }, [isGoogleReady, isAuthenticated]);
 
   useEffect(() => {
     const savedBooks = localStorage.getItem('memory_books');
@@ -271,77 +290,57 @@ const App: React.FC = () => {
      }
   };
 
-  if (!user || !isAuthenticated) {
-    return (
-      <LandingPage 
-        googleBtnRef={googleBtnRef} 
-        isGoogleReady={isGoogleReady} 
-        googleLoadError={googleLoadError} 
-      />
-    );
-  }
+  // Render Content based on state
+  const renderContent = () => {
+      if (!isAuthenticated || !user) {
+          return (
+            <LandingPage 
+                isGoogleReady={isGoogleReady} 
+                googleLoadError={googleLoadError}
+                isAuthenticated={isAuthenticated}
+            />
+          );
+      }
 
-  if (!user) return null; 
-
-  return (
-    <Layout 
-      user={user} 
-      onLogout={() => { setIsAuthenticated(false); setUser(null); }}
-      showBookControls={!!currentBook}
-      currentBookTitle={currentBook?.title}
-      onUpdateBookTitle={currentBook ? (newTitle) => handleUpdateBook({ ...currentBook, title: newTitle }) : undefined}
-      onAddSource={() => { setInsertAtIndex(null); setShowSourceSelector(true); }}
-      onCreateBook={handleCreateBook}
-      onShare={() => setShowShareModal(true)}
-      onBack={handleBack}
-      onOpenSettings={() => setShowSettingsModal(true)}
-      activePhase={showShareModal ? 'phase3' : (currentBook ? 'phase2' : 'phase1')}
-    >
-      {isCreatingBook && (
-         <div className="fixed inset-0 z-[100] bg-white/80 backdrop-blur-sm flex items-center justify-center">
-            <div className="flex flex-col items-center">
-                <i className="fas fa-folder-plus fa-spin text-4xl text-indigo-600 mb-4"></i>
-                <p className="font-bold text-slate-700">Skapar mappstruktur på Drive...</p>
-                <p className="text-xs text-slate-400">Dela din historia / Min Nya Berättelse</p>
-            </div>
-         </div>
-      )}
-
-      {!currentBook ? (
-        <div className="flex flex-col items-center md:items-start justify-center h-full max-w-7xl mx-auto px-8">
-            <div className="w-full flex flex-col md:flex-row gap-12 items-center">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-6">
-                      <h1 className="text-3xl font-black text-slate-900">Dela din historia</h1>
-                      <AppLogo variant="phase1" className="w-12 h-12" />
-                  </div>
-                  <p className="text-xs font-bold text-slate-400 uppercase mb-8">Över generationer i FamilySearch</p>
-                  
-                  <div className="flex items-center gap-4 mb-8">
-                     <img src={user.picture} className="w-16 h-16 rounded-full border-4 border-white shadow-lg" alt="Profile" />
-                     <div>
-                        <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Välkommen, {user.name}!</h2>
-                        <p className="text-sm text-slate-500">{user.email}</p>
-                        {!user.accessToken && (
-                           <p className="text-xs text-indigo-600 font-bold mt-1">Drive ej ansluten</p>
-                        )}
-                     </div>
-                  </div>
-                </div>
-                
-                <div className="flex-1 w-full h-[600px]">
-                    <Dashboard 
-                        books={books} 
-                        onCreateNew={handleCreateBook} 
-                        onOpenBook={setCurrentBook} 
-                        onUpdateBooks={handleUpdateBooks}
-                    />
+      if (!currentBook) {
+          return (
+            <div className="flex flex-col items-center md:items-start justify-center h-full max-w-7xl mx-auto px-8">
+                <div className="w-full flex flex-col md:flex-row gap-12 items-center h-full py-10">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-3 mb-6">
+                          <AppLogo variant="phase1" className="w-16 h-16" />
+                          <h1 className="text-3xl font-black text-slate-900">Välkommen!</h1>
+                      </div>
+                      <p className="text-xs font-bold text-slate-400 uppercase mb-8">Över generationer i FamilySearch</p>
+                      
+                      <div className="flex items-center gap-4 mb-8">
+                         <img src={user.picture} className="w-16 h-16 rounded-full border-4 border-white shadow-lg" alt="Profile" />
+                         <div>
+                            <h2 className="text-2xl font-bold text-slate-800 tracking-tight">{user.name}</h2>
+                            <p className="text-sm text-slate-500">{user.email}</p>
+                            {!user.accessToken && (
+                               <p className="text-xs text-indigo-600 font-bold mt-1">Drive ej ansluten</p>
+                            )}
+                         </div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex-1 w-full h-full max-h-[700px]">
+                        <Dashboard 
+                            books={books} 
+                            onCreateNew={handleCreateBook} 
+                            onOpenBook={setCurrentBook} 
+                            onUpdateBooks={handleUpdateBooks}
+                        />
+                    </div>
                 </div>
             </div>
-        </div>
-      ) : (
+          );
+      }
+
+      return (
         <StoryEditor 
-          currentBook={currentBook} // Pass entire book object
+          currentBook={currentBook} 
           items={currentBook.items}
           onUpdateItems={(newItemsOrUpdater) => {
               setCurrentBook(prevBook => {
@@ -360,13 +359,42 @@ const App: React.FC = () => {
           onOpenSourceSelector={(idx) => { setInsertAtIndex(idx); setShowSourceSelector(true); }}
           settings={settings}
         />
+      );
+  };
+
+  return (
+    <Layout 
+      user={user} // Can be null now
+      onLogout={() => { setIsAuthenticated(false); setUser(null); }}
+      showBookControls={!!currentBook && isAuthenticated}
+      currentBookTitle={currentBook?.title}
+      onUpdateBookTitle={currentBook ? (newTitle) => handleUpdateBook({ ...currentBook, title: newTitle }) : undefined}
+      onAddSource={() => { setInsertAtIndex(null); setShowSourceSelector(true); }}
+      onCreateBook={handleCreateBook}
+      onShare={() => setShowShareModal(true)}
+      onBack={isAuthenticated ? handleBack : undefined} // Only show back button if authenticated
+      onOpenSettings={() => setShowSettingsModal(true)}
+      activePhase={showShareModal ? 'phase3' : (currentBook ? 'phase2' : 'phase1')}
+      googleBtnDesktopRef={headerGoogleBtnDesktopRef}
+      googleBtnMobileRef={headerGoogleBtnMobileRef}
+    >
+      {isCreatingBook && (
+         <div className="fixed inset-0 z-[100] bg-white/80 backdrop-blur-sm flex items-center justify-center">
+            <div className="flex flex-col items-center">
+                <i className="fas fa-folder-plus fa-spin text-4xl text-indigo-600 mb-4"></i>
+                <p className="font-bold text-slate-700">Skapar mappstruktur på Drive...</p>
+                <p className="text-xs text-slate-400">Dela din historia / Min Nya Berättelse</p>
+            </div>
+         </div>
       )}
+
+      {renderContent()}
 
       {showSourceSelector && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-0 md:p-4">
            <div className="bg-white md:rounded-2xl shadow-2xl w-full max-w-4xl h-full md:h-[80vh] overflow-hidden flex flex-col">
               <FileBrowser 
-                accessToken={user.accessToken || ''}
+                accessToken={user?.accessToken || ''}
                 onRequestAccess={handleRequestDriveAccess}
                 onAddFiles={handleAddItemsToBook}
                 selectedIds={currentBook?.items.map(i => i.id) || []}
@@ -378,7 +406,7 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Settings Modal (Unchanged) */}
+      {/* Settings Modal */}
       {showSettingsModal && (
         <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in">
