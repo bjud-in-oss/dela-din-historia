@@ -258,6 +258,19 @@ const App: React.FC = () => {
       localStorage.setItem('memory_books', JSON.stringify(newBooks));
   };
 
+  // UNIFIED BACK HANDLER
+  const handleBack = () => {
+     if (showShareModal) {
+         setShowShareModal(false);
+     } else if (currentBook) {
+         setCurrentBook(null);
+     } else {
+         // Logout and return to landing
+         setIsAuthenticated(false);
+         setUser(null);
+     }
+  };
+
   if (!user || !isAuthenticated) {
     return (
       <LandingPage 
@@ -280,7 +293,7 @@ const App: React.FC = () => {
       onAddSource={() => { setInsertAtIndex(null); setShowSourceSelector(true); }}
       onCreateBook={handleCreateBook}
       onShare={() => setShowShareModal(true)}
-      onLogoClick={() => setCurrentBook(null)}
+      onBack={handleBack}
       onOpenSettings={() => setShowSettingsModal(true)}
       activePhase={showShareModal ? 'phase3' : (currentBook ? 'phase2' : 'phase1')}
     >

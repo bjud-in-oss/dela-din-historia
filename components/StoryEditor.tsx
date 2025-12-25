@@ -4,6 +4,7 @@ import { DriveFile, FileType, TextConfig, RichTextLine, PageMetadata, AppSetting
 import { generateCombinedPDF, splitPdfIntoPages, mergeFilesToPdf, createPreviewWithOverlay, getPdfPageCount, DEFAULT_TEXT_CONFIG, DEFAULT_FOOTER_CONFIG, calculateChunks, getPdfDocument, renderPdfPageToCanvas, extractHighQualityImage, processFileForCache, generatePageThumbnail } from '../services/pdfService';
 import { uploadToDrive } from '../services/driveService';
 import FamilySearchExport from './FamilySearchExport';
+import AppLogo from './AppLogo';
 
 const stringToColor = (str: string) => {
   let hash = 0;
@@ -117,6 +118,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
   // --- 2. CHUNK CALCULATION ---
   const { chunkMap, chunkList } = useMemo(() => {
+      // Calculate chunks is already designed to use processedSize if available
       const chunks = calculateChunks(items, bookTitle, settings.maxChunkSizeMB, settings.compressionLevel, settings.safetyMarginPercent);
       const map = new Map<string, { chunkIndex: number, isStart: boolean, isTooLarge: boolean, title: string, isFullyOptimized: boolean, colorClass: string }>();
       const effectiveLimit = settings.maxChunkSizeMB * (1 - (settings.safetyMarginPercent / 100));
@@ -277,15 +279,18 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
             </div>
          )}
          
-         {/* LEFT: INPUT (Samlade minnen) */}
+         {/* LEFT: INPUT (Samla minnen) */}
          <div className="flex-1 overflow-y-auto scroll-smooth relative border-r border-slate-200">
              <div className="p-8 pb-32">
-                <div className="flex justify-between items-end mb-6">
-                    <div>
-                        <h2 className="text-2xl font-serif font-bold text-slate-800">Samlade minnen</h2>
-                        <p className="text-xs text-slate-500 font-medium mt-1">
-                            {activeChunkFilter !== null ? `Visar endast del ${activeChunkFilter + 1}` : 'Alla objekt'}
-                        </p>
+                <div className="flex justify-between items-center mb-6">
+                    <div className="flex items-center space-x-3">
+                        <AppLogo variant="phase1" className="w-8 h-8" />
+                        <div>
+                            <h2 className="text-xl font-serif font-bold text-slate-800">Samla minnen</h2>
+                            <p className="text-[10px] text-slate-500 font-medium">
+                                {activeChunkFilter !== null ? `Visar endast del ${activeChunkFilter + 1}` : 'Alla objekt'}
+                            </p>
+                        </div>
                     </div>
                     {activeChunkFilter !== null && (
                         <button onClick={() => setActiveChunkFilter(null)} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded-full font-bold text-slate-600">
@@ -332,14 +337,21 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                     <span className="text-xs font-bold uppercase tracking-wider">Lägg till sida</span>
                 </button>
                 </div>
+
+                <div className="mt-12 text-center pb-8">
+                     <p className="text-slate-400 text-xs font-serif italic">"Klicka på och berätta kortfattat om dina minnen."</p>
+                </div>
              </div>
          </div>
 
-         {/* RIGHT: OUTPUT (Att dela) */}
+         {/* RIGHT: OUTPUT (Dela permanent) */}
          <div className="w-80 bg-white border-l border-slate-200 shadow-xl z-20 flex flex-col shrink-0">
              <div className="p-6 bg-slate-50 border-b border-slate-100">
-                 <h2 className="text-sm font-black text-slate-800 uppercase tracking-wide mb-1">Att dela till FamilySearch</h2>
-                 <p className="text-[10px] text-slate-500 font-medium">Boken delas automatiskt upp i {settings.maxChunkSizeMB} MB delar.</p>
+                 <div className="flex items-center space-x-3 mb-1">
+                    <AppLogo variant="phase3" className="w-6 h-6" />
+                    <h2 className="text-sm font-black text-slate-800 uppercase tracking-wide">Dela permanent</h2>
+                 </div>
+                 <p className="text-[10px] text-slate-500 font-medium">Boken förbereds automatiskt för FamilySearch.</p>
              </div>
              <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50">
                  {chunkList.map((chunk, idx) => {
@@ -348,9 +360,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                      const colorClass = CHUNK_COLORS[idx % CHUNK_COLORS.length];
                      const borderClass = CHUNK_BORDER_COLORS[idx % CHUNK_BORDER_COLORS.length];
                      
-                     // Helper to extract just the CSS color var roughly
-                     const liquidColor = colorClass.replace('bg-', 'text-'); // simple hack for icon, logical css needs mapping
-
                      return (
                          <div 
                             key={idx}
@@ -370,7 +379,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                                      </div>
                                      <div className="text-right">
                                          <span className="text-xs font-bold text-slate-900 block">{chunk.estimatedSizeMB.toFixed(1)} MB</span>
-                                         <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">{Math.round(percentFilled)}% Full</span>
+                                         <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Förberedd för FamilySearch</span>
                                      </div>
                                  </div>
                                  
@@ -380,13 +389,13 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                                  {/* Status Indicator */}
                                  <div className="flex items-center space-x-2 text-[10px] font-bold uppercase tracking-wide">
                                      {status === 'synced' ? (
-                                         <span className="text-emerald-600 flex items-center"><i className="fas fa-check-circle mr-1"></i> Sparad</span>
+                                         <span className="text-emerald-600 flex items-center"><i className="fas fa-check-circle mr-1"></i> Klar</span>
                                      ) : status === 'uploading' ? (
-                                         <span className="text-blue-600 flex items-center"><i className="fas fa-circle-notch fa-spin mr-1"></i> Sparar...</span>
+                                         <span className="text-blue-600 flex items-center"><i className="fas fa-circle-notch fa-spin mr-1"></i> Sparar till molnet...</span>
                                      ) : chunk.isFullyOptimized ? (
-                                         <span className="text-amber-500 flex items-center"><i className="fas fa-clock mr-1"></i> Väntar</span>
+                                         <span className="text-slate-500 flex items-center"><i className="fas fa-check mr-1"></i> Redo</span>
                                      ) : (
-                                         <span className="text-slate-400 flex items-center"><i className="fas fa-compress-arrows-alt fa-spin mr-1"></i> Optimerar...</span>
+                                         <span className="text-amber-500 flex items-center"><i className="fas fa-compress-arrows-alt fa-spin mr-1"></i> Optimerar filstorlek...</span>
                                      )}
                                  </div>
                              </div>
@@ -415,7 +424,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   );
 };
 
-// ... (Tile and RichTextListEditor components remain unchanged)
+// ... (Rest of component remains unchanged)
 const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove, onDragStart, onDragOver, chunkInfo }: any) => {
   const groupColor = stringToColor(item.id.split('-')[0] + (item.id.split('-')[1] || ''));
   const showSplit = (item.type === FileType.PDF || item.type === FileType.GOOGLE_DOC) && (item.pageCount === undefined || item.pageCount > 1);
@@ -466,6 +475,7 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
   );
 };
 
+// ... RichTextListEditor and EditModal and SidebarThumbnail remain the same ...
 const RichTextListEditor = ({ lines, onChange, onFocusLine, focusedLineId }: { lines: RichTextLine[], onChange: (l: RichTextLine[]) => void, onFocusLine: (id: string | null) => void, focusedLineId: string | null }) => {
     const handleTextChange = (id: string, newText: string) => onChange(lines.map(l => l.id === id ? { ...l, text: newText } : l));
     const handleKeyDown = (e: React.KeyboardEvent, index: number) => {

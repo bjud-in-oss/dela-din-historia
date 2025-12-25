@@ -4,6 +4,7 @@ import { DriveFile, AppSettings, FileType } from '../types';
 import { generateCombinedPDF, calculateChunks, processFileForCache } from '../services/pdfService';
 import { uploadToDrive, createFolder } from '../services/driveService';
 import JSZip from 'jszip';
+import AppLogo from './AppLogo';
 
 interface FamilySearchExportProps {
     items: DriveFile[];
@@ -17,60 +18,8 @@ interface FamilySearchExportProps {
 const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitle, accessToken, onBack, settings, onUpdateItems }) => {
     const [isExporting, setIsExporting] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 100, msg: '' });
-    const [precision, setPrecision] = useState(0);
 
-    // BACKGROUND PROCESSING EFFECT
-    // Automatically processes items to get exact size when this view is open
-    useEffect(() => {
-        let isCancelled = false;
-        
-        const processNextItem = async () => {
-            if (isCancelled) return;
-
-            // Find first image that needs processing
-            const itemToProcess = items.find(item => 
-                item.type === FileType.IMAGE && 
-                (!item.processedBuffer || item.compressionLevelUsed !== settings.compressionLevel)
-            );
-
-            if (!itemToProcess) return;
-
-            try {
-                const { buffer, size } = await processFileForCache(itemToProcess, accessToken, settings.compressionLevel);
-                
-                if (!isCancelled) {
-                    onUpdateItems((prevItems: DriveFile[]) => prevItems.map(prev => 
-                        prev.id === itemToProcess.id 
-                        ? { ...prev, processedBuffer: buffer, processedSize: size, compressionLevelUsed: settings.compressionLevel }
-                        : prev
-                    ));
-                }
-            } catch (e) {
-                console.error("Auto-process failed for", itemToProcess.name);
-            }
-        };
-
-        // Run immediately and then whenever items change (until all done)
-        const timer = setTimeout(processNextItem, 100);
-        return () => {
-            isCancelled = true;
-            clearTimeout(timer);
-        };
-    }, [items, accessToken, settings.compressionLevel]);
-
-    // Calculate Precision Metric
-    useEffect(() => {
-        const images = items.filter(i => i.type === FileType.IMAGE);
-        if (images.length === 0) {
-            setPrecision(100);
-            return;
-        }
-        const processed = images.filter(i => i.processedSize && i.compressionLevelUsed === settings.compressionLevel);
-        const p = Math.round((processed.length / images.length) * 100);
-        setPrecision(p);
-    }, [items, settings.compressionLevel]);
-
-    // Calculate chunks in real-time with the full settings object
+    // Calculate chunks in real-time
     const chunks = useMemo(() => 
         calculateChunks(items, bookTitle, settings.maxChunkSizeMB, settings.compressionLevel, settings.safetyMarginPercent), 
         [items, bookTitle, settings]
@@ -124,98 +73,24 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                 
                 {/* Header with Close */}
                 <div className="flex justify-between items-center mb-8">
-                    <button onClick={onBack} className="flex items-center space-x-2 text-slate-500 hover:text-slate-900 transition-colors bg-white px-4 py-2 rounded-full shadow-sm border border-slate-200">
-                        <i className="fas fa-arrow-left"></i>
-                        <span className="font-bold text-sm">Tillbaka till redigeraren</span>
-                    </button>
-                    <h1 className="text-2xl font-serif font-bold text-slate-900">Exportera & Bevara</h1>
+                    <div className="flex items-center space-x-3">
+                         <AppLogo variant="phase3" className="w-10 h-10" />
+                         <h1 className="text-2xl font-serif font-bold text-slate-900">Dela på FamilySearch</h1>
+                    </div>
                 </div>
 
-                {/* Status Section for Splitting */}
-                {needsSplit ? (
-                    <div className="bg-amber-50 border border-amber-200 rounded-2xl p-6 mb-8 flex items-start space-x-4 shadow-sm">
-                        <div className="w-10 h-10 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center shrink-0">
-                            <i className="fas fa-cut text-lg"></i>
-                        </div>
-                        <div className="flex-1 w-full">
-                            <h3 className="font-bold text-amber-900">Boken har delats upp i {chunks.length} delar</h3>
-                            <p className="text-sm text-amber-800 mt-1 mb-3">
-                                För att möta gränsen på {settings.maxChunkSizeMB} MB per fil har vi automatiskt delat upp din bok. 
-                                Du kan ladda ner alla delar som ett ZIP-arkiv. Alla delar är redan sparade på din Drive.
-                            </p>
-                            
-                            {/* Precision Meter */}
-                            <div className="mb-4">
-                                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-amber-900/60 mb-1">
-                                    <span>{precision < 100 ? `Beräknar exakt storlek: ${precision}%` : 'Exakt storlek beräknad'}</span>
-                                    {precision < 100 && <i className="fas fa-sync fa-spin"></i>}
-                                </div>
-                                <div className="h-1.5 w-full bg-amber-200/50 rounded-full overflow-hidden">
-                                    <div 
-                                        className={`h-full transition-all duration-300 ${precision === 100 ? 'bg-emerald-500' : 'bg-amber-500'}`} 
-                                        style={{ width: `${precision}%` }}
-                                    ></div>
-                                </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                {chunks.map((chunk, idx) => (
-                                    <div key={idx} className="bg-white/60 px-3 py-2 rounded-lg text-xs font-medium text-amber-900 border border-amber-100 flex justify-between">
-                                        <span>{chunk.title}</span>
-                                        <span className="opacity-60">~{chunk.estimatedSizeMB.toFixed(1)} MB</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                ) : (
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-6 mb-8 flex items-start space-x-4 shadow-sm">
-                        <div className="w-10 h-10 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center shrink-0">
-                            <i className="fas fa-check text-lg"></i>
-                        </div>
-                         <div className="flex-1 w-full">
-                            <h3 className="font-bold text-emerald-900">Optimerad storlek</h3>
-                            <p className="text-sm text-emerald-800 mb-3">
-                                Din bok ({chunks[0]?.estimatedSizeMB.toFixed(1)} MB) är redo. Den är redan sparad på din Drive.
-                            </p>
-
-                            {/* Precision Meter for Single Chunk */}
-                            <div className="mb-1">
-                                <div className="flex justify-between items-center text-[10px] font-bold uppercase tracking-widest text-emerald-900/60 mb-1">
-                                    <span>{precision < 100 ? `Beräknar exakt storlek: ${precision}%` : 'Exakt storlek beräknad'}</span>
-                                    {precision < 100 && <i className="fas fa-sync fa-spin"></i>}
-                                </div>
-                                <div className="h-1.5 w-full bg-emerald-200/50 rounded-full overflow-hidden">
-                                    <div 
-                                        className={`h-full transition-all duration-300 ${precision === 100 ? 'bg-emerald-500' : 'bg-emerald-400'}`} 
-                                        style={{ width: `${precision}%` }}
-                                    ></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Main Export Card */}
-                <div className="bg-white rounded-[2rem] shadow-xl overflow-hidden mb-12 border border-slate-100 relative">
-                    <div className="bg-slate-900 p-8 text-white flex flex-col md:flex-row items-center justify-between">
+                {/* Main Summary Card (Moved Up) */}
+                <div className="bg-slate-900 rounded-[1.5rem] shadow-xl overflow-hidden mb-12 border border-slate-900 relative">
+                    <div className="p-8 text-white flex flex-col md:flex-row items-center justify-between">
                         <div>
-                             <h2 className="text-3xl font-black mb-2">{bookTitle}</h2>
-                             <p className="opacity-80 font-serif italic text-lg">{items.length} sidor • Redo för arkivering</p>
-                        </div>
-                        <div className="mt-6 md:mt-0 flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4">
-                            <button 
-                                onClick={handleExport}
-                                disabled={isExporting} 
-                                className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-4 rounded-xl font-bold shadow-lg shadow-indigo-900/50 transition-all flex items-center justify-center space-x-3 disabled:opacity-50 hover:-translate-y-1"
-                            >
-                                {isExporting ? <i className="fas fa-circle-notch fa-spin"></i> : (needsSplit ? <i className="fas fa-file-zipper text-xl"></i> : <i className="fas fa-file-download text-xl"></i>)}
-                                <span>{needsSplit ? 'Ladda ner ZIP' : 'Ladda ner PDF'}</span>
-                            </button>
+                             <h2 className="text-xl font-bold mb-1">Boken "{bookTitle}"</h2>
+                             <p className="opacity-80 font-serif italic text-sm">
+                                 {items.length} sidor över {chunks.length} filer • Redo att dela med framtida generationer
+                             </p>
                         </div>
                     </div>
                     {isExporting && (
-                         <div className="p-4 bg-indigo-50 text-indigo-900 text-center text-sm font-bold border-b border-indigo-100 animate-pulse">
+                         <div className="p-4 bg-indigo-50 text-indigo-900 text-center text-sm font-bold border-t border-indigo-100 animate-pulse">
                              {progress.msg}
                          </div>
                     )}
@@ -225,17 +100,6 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                     
                     {/* Alternatives Column (2/3 width) */}
                     <div className="lg:col-span-2 space-y-8">
-                        <div className="flex items-center justify-between">
-                            <h3 className="text-xl font-bold text-slate-900 flex items-center">
-                                <span className="w-8 h-8 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center mr-3 text-sm">
-                                    <i className="fas fa-tree"></i>
-                                </span>
-                                Dela på FamilySearch
-                            </h3>
-                            <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
-                                <i className="fas fa-infinity mr-1"></i> Gratis för alltid
-                            </span>
-                        </div>
                         
                         {/* PRIVAT DELNING */}
                         <div>
@@ -302,50 +166,57 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                                 />
                             </div>
                         </div>
+
+                         <div className="pt-4 border-t border-slate-100 flex justify-end">
+                            <button 
+                                onClick={handleExport}
+                                disabled={isExporting} 
+                                className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-4 rounded-xl font-bold shadow-lg shadow-indigo-900/50 transition-all flex items-center justify-center space-x-3 disabled:opacity-50 hover:-translate-y-1"
+                            >
+                                {isExporting ? <i className="fas fa-circle-notch fa-spin"></i> : (needsSplit ? <i className="fas fa-file-zipper text-xl"></i> : <i className="fas fa-share-square text-xl"></i>)}
+                                <span>Dela boken (Ladda ner)</span>
+                            </button>
+                        </div>
                     </div>
 
-                    {/* AI Tip Column (1/3 width) */}
+                    {/* AI Tip Column (1/3 width) - LIGHTER DESIGN */}
                     <div className="space-y-6">
                          <h3 className="text-xl font-bold text-slate-900 flex items-center">
-                            <span className="w-8 h-8 bg-purple-100 text-purple-600 rounded-lg flex items-center justify-center mr-3 text-sm">
+                            <span className="w-8 h-8 bg-purple-50 text-purple-600 rounded-lg flex items-center justify-center mr-3 text-sm">
                                 <i className="fas fa-magic"></i>
                             </span>
-                            Förfina berättelsen
+                            Tips: Förfina berättelsen
                         </h3>
 
-                        <div className="bg-gradient-to-br from-purple-600 to-indigo-700 p-1 rounded-[2rem] shadow-xl text-white">
-                            <div className="bg-slate-900/40 backdrop-blur-sm p-6 rounded-[1.8rem] h-full relative overflow-hidden">
-                                 {/* Background decoration */}
-                                 <div className="absolute top-0 right-0 -mt-10 -mr-10 w-40 h-40 bg-purple-500 rounded-full opacity-30 blur-3xl"></div>
-                                 <div className="absolute bottom-0 left-0 -mb-10 -ml-10 w-40 h-40 bg-indigo-500 rounded-full opacity-30 blur-3xl"></div>
-                                 
+                        <div className="bg-white border border-slate-200 rounded-[1.5rem] shadow-sm overflow-hidden">
+                            <div className="p-6 relative">
                                  <div className="relative z-10">
-                                     <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mb-6 border border-white/20 shadow-inner">
-                                        <i className="fas fa-robot text-3xl text-purple-300"></i>
+                                     <div className="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center mb-4 text-purple-600">
+                                        <i className="fas fa-robot text-2xl"></i>
                                      </div>
 
-                                     <h4 className="text-xl font-black mb-3 leading-tight">Med NotebookLM</h4>
-                                     <p className="text-purple-100 text-xs leading-relaxed mb-4 font-medium">
-                                        Skapa proffsiga berättelser genom att:
+                                     <h4 className="text-lg font-bold mb-2 text-slate-900">Med NotebookLM</h4>
+                                     <p className="text-slate-500 text-xs leading-relaxed mb-4">
+                                        Skapa proffsiga berättelser av dina PDF-filer:
                                      </p>
 
-                                     <ol className="space-y-2 mb-6 text-[11px] text-purple-50 list-decimal list-inside font-medium bg-black/20 p-3 rounded-xl border border-white/10">
+                                     <ol className="space-y-2 mb-6 text-[11px] text-slate-600 list-decimal list-inside font-medium bg-slate-50 p-3 rounded-xl border border-slate-100">
                                          <li>"Skapa anteckningsbok"</li>
                                          <li>"Lägga till källor" (Din PDF)</li>
                                          <li>Skapa ljud/text i <strong>"Studio"</strong></li>
                                          <li>Granska och ladda ned</li>
                                      </ol>
                                      
-                                     <div className="bg-amber-500/20 border border-amber-300/30 p-3 rounded-xl mb-6">
-                                        <p className="text-[10px] text-amber-100 leading-tight">
-                                            <strong className="text-amber-300 block mb-1">Tips:</strong>
-                                            Om berättelserna inte blev bra, skriv då mer information om det du saknar i källorna och skapa om dokumenten igen.
+                                     <div className="bg-amber-50 border border-amber-100 p-3 rounded-xl mb-6">
+                                        <p className="text-[10px] text-amber-800 leading-tight">
+                                            <strong className="text-amber-600 block mb-1">Tips:</strong>
+                                            Om berättelserna inte blev bra, skriv mer information i din bok och prova igen.
                                         </p>
                                      </div>
 
-                                     <a href="https://notebooklm.google.com/" target="_blank" className="w-full py-4 bg-white text-purple-900 font-black rounded-xl shadow-lg hover:bg-purple-50 transition-all flex items-center justify-center space-x-2 group">
+                                     <a href="https://notebooklm.google.com/" target="_blank" className="w-full py-3 bg-purple-50 text-purple-700 font-bold rounded-xl hover:bg-purple-100 transition-all flex items-center justify-center space-x-2 text-sm">
                                          <span>Öppna NotebookLM</span>
-                                         <i className="fas fa-external-link-alt text-xs group-hover:translate-x-1 transition-transform"></i>
+                                         <i className="fas fa-external-link-alt text-xs"></i>
                                      </a>
                                  </div>
                             </div>

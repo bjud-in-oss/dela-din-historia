@@ -1,6 +1,5 @@
 
 import React, { useState } from 'react';
-import AppLogo from './AppLogo';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -13,7 +12,7 @@ interface LayoutProps {
   showBookControls?: boolean;
   currentBookTitle?: string;
   onUpdateBookTitle?: (newTitle: string) => void;
-  onLogoClick?: () => void;
+  onBack?: () => void; // Unified Back Action
   onOpenSettings: () => void;
   activePhase?: 'phase1' | 'phase2' | 'phase3';
 }
@@ -28,7 +27,7 @@ const Layout: React.FC<LayoutProps> = ({
   showBookControls = false,
   currentBookTitle,
   onUpdateBookTitle,
-  onLogoClick,
+  onBack,
   onOpenSettings,
   activePhase = 'phase1'
 }) => {
@@ -39,14 +38,16 @@ const Layout: React.FC<LayoutProps> = ({
       {/* Top Navbar */}
       <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0 z-40 relative">
         
-        {/* Left: Logo & Title */}
-        <div className="flex items-center space-x-3 w-1/3">
-          <div 
-             onClick={onLogoClick}
-             className={`shrink-0 ${onLogoClick ? 'cursor-pointer hover:scale-110 transition-transform' : ''}`}
+        {/* Left: Back Arrow & Title */}
+        <div className="flex items-center space-x-4 w-1/3">
+          <button 
+             onClick={onBack}
+             className="w-10 h-10 flex items-center justify-center rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-800 transition-all"
+             title="Gå tillbaka"
           >
-             <AppLogo variant={activePhase} className="h-10 w-10" />
-          </div>
+             <i className="fas fa-arrow-left text-xl"></i>
+          </button>
+          
           <div className="flex-1">
             {currentBookTitle !== undefined ? (
                onUpdateBookTitle ? (
@@ -81,10 +82,13 @@ const Layout: React.FC<LayoutProps> = ({
         <div className="w-1/3 flex justify-end relative">
           <button 
             onClick={() => setShowProfileMenu(!showProfileMenu)}
-            className="w-10 h-10 rounded-full border-2 border-slate-100 p-0.5 hover:border-red-100 transition-colors focus:outline-none focus:ring-2 focus:ring-red-100"
+            className="w-10 h-10 rounded-full border-2 border-slate-100 p-0.5 hover:border-red-100 transition-colors focus:outline-none focus:ring-2 focus:ring-red-100 flex items-center justify-center bg-slate-50"
           >
-            <img src={user.picture} alt="Profil" className="w-full h-full rounded-full object-cover" />
-            <div className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></div>
+            {user?.picture ? (
+                <img src={user.picture} alt="Profil" className="w-full h-full rounded-full object-cover" />
+            ) : (
+                <span className="font-bold text-slate-600">{user?.name?.charAt(0) || 'U'}</span>
+            )}
           </button>
 
           {showProfileMenu && (
