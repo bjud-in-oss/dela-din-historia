@@ -35,6 +35,9 @@ const App: React.FC = () => {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [isCreatingBook, setIsCreatingBook] = useState(false);
   
+  // New state to remember pending actions during auth flow
+  const [pendingAction, setPendingAction] = useState<'createBook' | 'addSource' | null>(null);
+
   // Dashboard Intro State
   const [hideIntro, setHideIntro] = useState(false);
   // Separate state for the checkbox to allow "hide NEXT time" without hiding immediately
@@ -143,6 +146,18 @@ const App: React.FC = () => {
     };
   }, [isGoogleReady]);
 
+  // Execute pending actions when authenticated
+  useEffect(() => {
+      if (user?.accessToken && pendingAction) {
+          if (pendingAction === 'createBook') {
+              handleCreateBook();
+          } else if (pendingAction === 'addSource') {
+              setShowSourceSelector(true);
+          }
+          setPendingAction(null);
+      }
+  }, [user?.accessToken, pendingAction]);
+
   // Render buttons when ready
   useEffect(() => {
     if (isGoogleReady && !isAuthenticated) {
@@ -248,6 +263,7 @@ const App: React.FC = () => {
 
   const handleCreateBook = async () => {
     if (!user?.accessToken) {
+       setPendingAction('createBook');
        handleRequestDriveAccess();
        return;
     }
@@ -402,7 +418,14 @@ const App: React.FC = () => {
       showBookControls={!!currentBook && isAuthenticated}
       currentBookTitle={currentBook?.title}
       onUpdateBookTitle={currentBook ? (newTitle) => handleUpdateBook({ ...currentBook, title: newTitle }) : undefined}
-      onAddSource={() => { setInsertAtIndex(null); setShowSourceSelector(true); }}
+      onAddSource={() => { 
+          if(!user?.accessToken) {
+              setPendingAction('addSource');
+              handleRequestDriveAccess();
+          } else {
+              setInsertAtIndex(null); setShowSourceSelector(true); 
+          }
+      }}
       onCreateBook={handleCreateBook}
       onShare={() => setShowShareModal(true)}
       onBack={handleBack} 

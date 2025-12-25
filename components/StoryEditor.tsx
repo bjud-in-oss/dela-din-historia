@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { DriveFile, FileType, TextConfig, RichTextLine, PageMetadata, AppSettings, MemoryBook } from '../types';
-import { generateCombinedPDF, splitPdfIntoPages, mergeFilesToPdf, createPreviewWithOverlay, getPdfPageCount, DEFAULT_TEXT_CONFIG, DEFAULT_FOOTER_CONFIG, calculateChunks, getPdfDocument, renderPdfPageToCanvas, extractHighQualityImage, processFileForCache, generatePageThumbnail } from '../services/pdfService';
+import { generateCombinedPDF, splitPdfIntoPages, mergeFilesToPdf, createPreviewWithOverlay, getPdfPageCount, DEFAULT_TEXT_CONFIG, DEFAULT_FOOTER_CONFIG, getPdfDocument, renderPdfPageToCanvas, extractHighQualityImage, processFileForCache, generatePageThumbnail } from '../services/pdfService';
 import { uploadToDrive } from '../services/driveService';
 import FamilySearchExport from './FamilySearchExport';
 import AppLogo from './AppLogo';
@@ -20,20 +20,22 @@ const stringToColor = (str: string) => {
 };
 
 const CHUNK_COLORS = [
-    'bg-indigo-500',
-    'bg-emerald-500',
-    'bg-amber-500',
-    'bg-rose-500',
-    'bg-cyan-500'
+    'border-indigo-500',
+    'border-emerald-500',
+    'border-amber-500',
+    'border-rose-500',
+    'border-cyan-500'
 ];
 
-const CHUNK_BORDER_COLORS = [
-    'border-indigo-200',
-    'border-emerald-200',
-    'border-amber-200',
-    'border-rose-200',
-    'border-cyan-200'
-];
+interface ChunkData {
+    id: number;
+    items: DriveFile[];
+    sizeBytes: number;
+    isOptimized: boolean; // True if we have confirmed size < limit
+    isUploading: boolean;
+    isSynced: boolean;
+    title: string;
+}
 
 interface StoryEditorProps {
   currentBook: MemoryBook; 
@@ -66,112 +68,223 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [activeChunkFilter, setActiveChunkFilter] = useState<number | null>(null);
+  
+  // Layout State for Responsive Sidebar
+  const [isSidebarCompact, setIsSidebarCompact] = useState(false);
+  const [showSidebarOverlay, setShowSidebarOverlay] = useState(false);
+  const rightColumnRef = useRef<HTMLDivElement>(null);
 
-  // Sync State
-  const [syncedHashes, setSyncedHashes] = useState<Map<number, string>>(new Map());
-  const [syncStatus, setSyncStatus] = useState<Record<number, 'synced' | 'uploading' | 'dirty' | 'waiting'>>({});
-
-  // --- 1. CONTINUOUS OPTIMIZATION LOOP ---
+  // --- OPTIMIZATION STATE ---
+  const [chunks, setChunks] = useState<ChunkData[]>([]);
+  const [optimizationCursor, setOptimizationCursor] = useState(0); // Index in 'items' where next chunk starts
+  
+  // Reset optimization when items change significantly
+  const itemsHash = items.map(i => i.id + i.modifiedTime).join('|');
   useEffect(() => {
-     let isCancelled = false;
-     
-     const processQueue = async () => {
-         if (isCancelled) return;
-         
-         // Find ONE item that needs processing
-         const itemToProcess = items.find(item => 
-             (item.type === FileType.IMAGE && (!item.processedBuffer || item.compressionLevelUsed !== settings.compressionLevel)) ||
-             (item.type === FileType.PDF && item.pageCount === undefined)
-         );
+      setOptimizationCursor(0);
+      setChunks([]);
+  }, [itemsHash, settings.maxChunkSizeMB, settings.compressionLevel]);
 
-         if (!itemToProcess) return;
+  // --- THE SQUEEZE ALGORITHM (Divide & Conquer via Real Measurement) ---
+  useEffect(() => {
+    let isCancelled = false;
 
-         try {
-            const { buffer, size } = await processFileForCache(itemToProcess, accessToken, settings.compressionLevel);
+    const optimizeNextChunk = async () => {
+        // If we processed all items, stop.
+        if (optimizationCursor >= items.length) return;
+        // If we are already working on the current cursor (i.e., last chunk isn't optimized yet), wait.
+        if (chunks.length > 0 && !chunks[chunks.length - 1].isOptimized) return;
+
+        const limitBytes = settings.maxChunkSizeMB * 1024 * 1024;
+        const safetyBytes = limitBytes * (1 - (settings.safetyMarginPercent / 100)); // Target slightly below max
+
+        // 1. Initial Guess (Greedy)
+        let candidateEndIndex = optimizationCursor;
+        let estimatedSize = 0;
+        
+        // Quick pass to find a starting point using rough estimates
+        while (candidateEndIndex < items.length) {
+             const item = items[candidateEndIndex];
+             // Use processedSize if available, else guess
+             const itemSize = item.processedSize || item.size * 0.7; 
+             if (estimatedSize + itemSize > limitBytes * 1.2) break; // Allow slight overshoot for squeeze
+             estimatedSize += itemSize;
+             candidateEndIndex++;
+        }
+        // Ensure at least one item
+        if (candidateEndIndex === optimizationCursor) candidateEndIndex++;
+
+        // 2. Measure & Squeeze Loop
+        let bestFitIndex = candidateEndIndex;
+        let bestFitSize = 0;
+        let isStable = false;
+
+        // Create a temporary chunk entry to show "Optimizing..."
+        const currentChunkId = chunks.length + 1;
+        const tempItems = items.slice(optimizationCursor, candidateEndIndex);
+        
+        // Update UI to show we are working
+        if (!isCancelled) {
+             setChunks(prev => [
+                 ...prev.filter(c => c.isOptimized), // Keep finished ones
+                 {
+                     id: currentChunkId,
+                     items: tempItems,
+                     sizeBytes: 0,
+                     isOptimized: false,
+                     isUploading: false,
+                     isSynced: false,
+                     title: `${bookTitle} (Del ${currentChunkId})`
+                 }
+             ]);
+        }
+
+        // Loop to find exact fit
+        while (!isStable && !isCancelled) {
+            const candidateItems = items.slice(optimizationCursor, candidateEndIndex);
             
-            let pageCount = itemToProcess.pageCount;
-            if ((itemToProcess.type === FileType.PDF || itemToProcess.type === FileType.GOOGLE_DOC) && !pageCount) {
-                pageCount = await getPdfPageCount(new Blob([buffer as any], {type: 'application/pdf'}));
+            // MEASURE: Generate PDF in RAM
+            let realSize = 0;
+            try {
+                // Ensure items are processed/cached first
+                for (const item of candidateItems) {
+                    if (!item.processedBuffer || item.compressionLevelUsed !== settings.compressionLevel) {
+                         const { buffer, size } = await processFileForCache(item, accessToken, settings.compressionLevel);
+                         // Cache this update immediately to avoid re-downloading
+                         if (!isCancelled) {
+                             onUpdateItems(prev => prev.map(p => p.id === item.id ? { ...p, processedBuffer: buffer, processedSize: size, compressionLevelUsed: settings.compressionLevel } : p));
+                         }
+                    }
+                }
+                
+                // Now measure the combination
+                const pdfBytes = await generateCombinedPDF(accessToken, candidateItems, "temp", settings.compressionLevel);
+                realSize = pdfBytes.byteLength;
+            } catch (e) {
+                console.error("Measurement failed", e);
+                break; // Abort
             }
 
-            if (!isCancelled) {
-                onUpdateItems((prevItems: DriveFile[]) => prevItems.map(prev => 
-                    prev.id === itemToProcess.id 
-                    ? { 
-                        ...prev, 
-                        processedBuffer: buffer, 
-                        processedSize: size, 
-                        compressionLevelUsed: settings.compressionLevel,
-                        pageCount: pageCount || 1
-                      }
-                    : prev
-                ));
+            // DECIDE
+            if (realSize > limitBytes) {
+                // Too big, remove last item
+                if (candidateEndIndex - 1 > optimizationCursor) {
+                    candidateEndIndex--;
+                } else {
+                    // Even one file is too big? Keep it but warn (or just accept it as a single file chunk)
+                    bestFitSize = realSize;
+                    isStable = true; 
+                }
+            } else if (realSize < safetyBytes && candidateEndIndex < items.length) {
+                // Too small (room for more), add next item
+                candidateEndIndex++;
+                // Check if we just jumped too far in next iteration
+            } else {
+                // Just right (between safety and limit) OR we hit end of list
+                // Double check: if we added an item and it became too big, we revert in the logic above?
+                // Actually, the logic "realSize > limit" handles the "oops too big" case.
+                // So if we are here, we are <= limit.
+                
+                // Optimization: Try ONE MORE to see if it fits?
+                // The algorithm above naturally oscillates. 
+                // Let's strict check:
+                // If we are valid, save this state as "Best so far".
+                bestFitIndex = candidateEndIndex;
+                bestFitSize = realSize;
+                
+                // Can we fit one more?
+                if (candidateEndIndex < items.length) {
+                    // Speculatively check next loop, or just stop here if close enough?
+                    // "Divide and conquer" implies finding the boundary.
+                    // If we are < 14.5 MB, we SHOULD try more.
+                    if (realSize < (limitBytes * 0.9)) { 
+                         candidateEndIndex++;
+                         // Continue loop to measure
+                    } else {
+                         isStable = true;
+                    }
+                } else {
+                    isStable = true; // End of list
+                }
             }
-         } catch (e) { 
-             console.error("Optimization failed for", itemToProcess.name);
-         }
-     };
+        }
 
-     const timer = setTimeout(processQueue, 200); 
-     return () => { isCancelled = true; clearTimeout(timer); };
-  }, [items, settings.compressionLevel, accessToken]); 
+        if (!isCancelled && isStable) {
+            const finalItems = items.slice(optimizationCursor, candidateEndIndex);
+            setChunks(prev => {
+                const existing = prev.filter(c => c.isOptimized);
+                return [...existing, {
+                    id: existing.length + 1,
+                    items: finalItems,
+                    sizeBytes: bestFitSize,
+                    isOptimized: true,
+                    isUploading: false,
+                    isSynced: false,
+                    title: `${bookTitle} (Del ${existing.length + 1})`
+                }];
+            });
+            setOptimizationCursor(candidateEndIndex);
+        }
+    };
 
-  // --- 2. CHUNK CALCULATION ---
-  const { chunkMap, chunkList } = useMemo(() => {
-      // Calculate chunks uses processedSize if available (optimization logic updated in loop)
-      const chunks = calculateChunks(items, bookTitle, settings.maxChunkSizeMB, settings.compressionLevel, settings.safetyMarginPercent);
-      const map = new Map<string, { chunkIndex: number, isStart: boolean, isTooLarge: boolean, title: string, isFullyOptimized: boolean, colorClass: string }>();
-      const effectiveLimit = settings.maxChunkSizeMB * (1 - (settings.safetyMarginPercent / 100));
+    const timer = setTimeout(optimizeNextChunk, 500); // Small delay to allow UI to settle
+    return () => { isCancelled = true; clearTimeout(timer); };
 
-      chunks.forEach((chunk, cIdx) => {
-          chunk.items.forEach((item, iIdx) => {
-              const multiplier = item.type === FileType.IMAGE ? 1.0 : 1.0; 
-              const sizeMB = ((item.processedSize || item.size || 0) * multiplier) / (1024 * 1024);
-              const isTooLarge = sizeMB > effectiveLimit;
-              map.set(item.id, { 
-                  chunkIndex: cIdx, 
-                  isStart: iIdx === 0, 
-                  isTooLarge, 
-                  title: chunk.title, 
-                  isFullyOptimized: chunk.isFullyOptimized,
-                  colorClass: CHUNK_COLORS[cIdx % CHUNK_COLORS.length]
-              });
-          });
-      });
-      return { chunkMap: map, chunkList: chunks };
-  }, [items, bookTitle, settings.maxChunkSizeMB, settings.compressionLevel, settings.safetyMarginPercent]);
+  }, [itemsHash, optimizationCursor, chunks.length, settings.compressionLevel, settings.maxChunkSizeMB]);
 
-  // --- 3. STRICT SYNC LOGIC ---
+
+  // --- UPLOAD / SYNC LOGIC ---
   useEffect(() => {
       if (!currentBook.driveFolderId) return;
 
-      const syncChunks = async () => {
-          for (const chunk of chunkList) {
-              const partNum = chunk.partNumber;
-              const lastHash = syncedHashes.get(partNum);
-              const isReadyToUpload = syncStatus[partNum] !== 'uploading';
+      const sync = async () => {
+          // Find first chunk that is optimized but not synced/uploading
+          const chunkToSync = chunks.find(c => c.isOptimized && !c.isSynced && !c.isUploading);
+          if (!chunkToSync) return;
 
-              if (isReadyToUpload && chunk.contentHash !== lastHash) {
-                  setSyncStatus(prev => ({ ...prev, [partNum]: 'uploading' }));
-                  try {
-                      const pdfBytes = await generateCombinedPDF(accessToken, chunk.items, chunk.title, settings.compressionLevel);
-                      const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
-                      await uploadToDrive(accessToken, currentBook.driveFolderId!, `${chunk.title}.pdf`, blob);
-                      setSyncedHashes(prev => new Map(prev).set(partNum, chunk.contentHash));
-                      setSyncStatus(prev => ({ ...prev, [partNum]: 'synced' }));
-                  } catch (e) {
-                      console.error(`Failed to sync ${chunk.title}`, e);
-                      setSyncStatus(prev => ({ ...prev, [partNum]: 'dirty' }));
-                  }
-                  await new Promise(r => setTimeout(r, 1000));
-              } 
+          // Mark uploading
+          setChunks(prev => prev.map(c => c.id === chunkToSync.id ? { ...c, isUploading: true } : c));
+
+          try {
+              const pdfBytes = await generateCombinedPDF(accessToken, chunkToSync.items, chunkToSync.title, settings.compressionLevel);
+              const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+              await uploadToDrive(accessToken, currentBook.driveFolderId!, `${chunkToSync.title}.pdf`, blob);
+              
+              setChunks(prev => prev.map(c => c.id === chunkToSync.id ? { ...c, isUploading: false, isSynced: true } : c));
+          } catch (e) {
+              console.error("Upload failed", e);
+              // Reset uploading so it retries (or handle error state)
+              setChunks(prev => prev.map(c => c.id === chunkToSync.id ? { ...c, isUploading: false } : c));
           }
       };
-      const t = setTimeout(syncChunks, 2000); 
-      return () => clearTimeout(t);
-  }, [chunkList, currentBook.driveFolderId, syncedHashes, settings.compressionLevel, bookTitle]);
 
-  // --- HANDLERS ---
+      const t = setTimeout(sync, 1000);
+      return () => clearTimeout(t);
+  }, [chunks, currentBook.driveFolderId, accessToken]);
+
+
+  // --- RESPONSIVE SIDEBAR LOGIC ---
+  useEffect(() => {
+      const handleResize = () => {
+          const shouldBeCompact = window.innerWidth < 1280;
+          setIsSidebarCompact(shouldBeCompact);
+          if (!shouldBeCompact) setShowSidebarOverlay(false);
+      };
+      handleResize();
+      window.addEventListener('resize', handleResize);
+      return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const toggleOverlay = () => {
+      if (isSidebarCompact) {
+          setShowSidebarOverlay(!showSidebarOverlay);
+      }
+  };
+
+  // --- HELPER FOR UI ---
+  const getChunkForItem = (itemId: string) => chunks.find(c => c.items.some(i => i.id === itemId));
+
+  // --- HANDLERS (Same as before) ---
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDraggedIndex(index);
     e.dataTransfer.effectAllowed = "move";
@@ -258,7 +371,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   };
 
   const filteredItems = activeChunkFilter !== null 
-     ? items.filter(item => chunkMap.get(item.id)?.chunkIndex === activeChunkFilter)
+     ? (chunks.find(c => c.id === activeChunkFilter)?.items || [])
      : items;
 
   if (showShareView) {
@@ -267,154 +380,93 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       );
   }
 
-  return (
-    <>
-      <div className="flex h-full bg-[#f0f2f5] overflow-hidden" onClick={() => setSelectedIds(new Set())}>
-         {isProcessing && (
-            <div className="fixed inset-0 z-[60] bg-white/80 backdrop-blur-sm flex items-center justify-center">
-                <div className="flex flex-col items-center">
-                    <i className="fas fa-circle-notch fa-spin text-4xl text-indigo-600 mb-4"></i>
-                    <p className="font-bold text-slate-700">Bearbetar...</p>
-                </div>
-            </div>
-         )}
-         
-         {/* LEFT: INPUT */}
-         <div className="flex-1 overflow-y-auto scroll-smooth relative border-r border-slate-200">
-             <div className="p-8 pb-32">
-                <div className="flex justify-between items-center mb-8">
-                    <div className="flex items-center space-x-4">
-                        <div className="shrink-0">
-                            {/* Phase 2 Icon ("Berätta") */}
-                            <AppLogo variant="phase2" className="w-20 h-20" />
-                        </div>
-                        <div>
-                            {/* Renamed Left Column Header */}
-                            <h2 className="text-2xl font-serif font-bold text-slate-900">Berätta kortfattat</h2>
-                            <p className="text-sm text-slate-500 font-medium mt-1">Klicka och skriv</p>
-                        </div>
-                    </div>
-                    {activeChunkFilter !== null && (
-                        <button onClick={() => setActiveChunkFilter(null)} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded-full font-bold text-slate-600">
-                            Visa alla
-                        </button>
-                    )}
-                </div>
+  // --- RENDER HELPERS FOR RIGHT COLUMN ---
+  const renderFilesList = (isCompact: boolean) => (
+      <>
+        <div className={`p-6 bg-slate-50 border-b border-slate-100 ${isCompact ? 'flex justify-center p-4' : ''}`}>
+             {!isCompact ? (
+                 <>
+                    <h2 className="text-xl font-serif font-bold text-slate-900 leading-tight">Filer till FamilySearch</h2>
+                    <p className="text-[10px] text-slate-500 font-medium mt-1">Klicka och filtrera minnen</p>
+                 </>
+             ) : (
+                 <button onClick={toggleOverlay} className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300 transition-colors">
+                     <i className="fas fa-bars text-slate-600"></i>
+                 </button>
+             )}
+        </div>
+        
+        {/* CONTINUOUS LIST "METER" */}
+        <div className={`flex-1 overflow-y-auto bg-slate-50/50 custom-scrollbar ${isCompact ? 'px-1' : 'p-0'}`}>
+             {chunks.map((chunk, idx) => {
+                 const isGreen = chunk.isSynced;
+                 const isOptimizing = !chunk.isOptimized;
+                 const sizeMB = (chunk.sizeBytes / (1024 * 1024)).toFixed(1);
+                 const borderColor = CHUNK_COLORS[idx % CHUNK_COLORS.length].replace('border-', 'border-l-4 border-');
 
-                {selectedIds.size > 0 && (
-                    <div className="sticky top-4 z-40 bg-slate-900 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center justify-between animate-in slide-in-from-top-4 mb-6 mx-auto max-w-lg">
-                        <span className="font-bold text-sm">{selectedIds.size} valda</span>
-                        <div className="flex space-x-4">
-                            <button onClick={(e) => { e.stopPropagation(); handleInsertAfterSelection(); }} className="hover:text-emerald-400 font-bold text-xs flex items-center space-x-1"><i className="fas fa-plus-circle"></i> <span>Lägg till</span></button>
-                            {selectedIds.size > 1 && <button onClick={handleMergeItems} className="hover:text-indigo-300 font-bold text-xs flex items-center space-x-1"><i className="fas fa-object-group"></i> <span>Slå ihop</span></button>}
-                            <button onClick={() => { onUpdateItems(items.filter(i => !selectedIds.has(i.id))); setSelectedIds(new Set()); }} className="hover:text-red-400 font-bold text-xs flex items-center space-x-1"><i className="fas fa-trash"></i> <span>Ta bort</span></button>
-                        </div>
-                    </div>
-                )}
-
-                <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 select-none">
-                
-                {/* ADD PAGE TILE - ALWAYS FIRST */}
-                <button 
-                    onClick={() => onOpenSourceSelector(null)}
-                    className="aspect-[210/297] rounded-lg border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all group bg-white"
-                >
-                    <div className="mb-2 transform group-hover:scale-110 transition-transform">
-                        {/* Phase 1 Icon ("Samla minnen") above the plus */}
-                        <AppLogo variant="phase1" className="w-12 h-12" />
-                    </div>
-                    <div className="w-8 h-8 rounded-full bg-slate-100 group-hover:bg-white group-hover:shadow-md flex items-center justify-center mb-2 transition-all">
-                        <i className="fas fa-plus text-lg"></i>
-                    </div>
-                    <span className="text-sm font-bold uppercase tracking-wider text-center px-2">Lägg till<br/>minne</span>
-                </button>
-
-                {filteredItems.map((item, index) => {
-                    // We need original index for correct dragging if filtered
-                    const originalIndex = items.findIndex(i => i.id === item.id);
-                    const chunkInfo = chunkMap.get(item.id);
-                    return (
-                        <Tile 
-                            key={item.id} id={`tile-${item.id}`} item={item} index={originalIndex}
-                            isSelected={selectedIds.has(item.id)}
-                            onClick={(e: React.MouseEvent) => handleSelection(e, item, originalIndex)}
-                            onEdit={() => setEditingItem(item)}
-                            onSplit={() => handleSplitPdf(item, originalIndex)}
-                            onRemove={() => onUpdateItems(items.filter(i => i.id !== item.id))}
-                            onDragStart={(e: any) => handleDragStart(e, originalIndex)}
-                            onDragOver={(e: any) => handleDragOver(e, originalIndex)}
-                            chunkInfo={chunkInfo}
-                        />
-                    );
-                })}
-                </div>
-             </div>
-         </div>
-
-         {/* RIGHT: OUTPUT */}
-         <div className="w-80 bg-white border-l border-slate-200 shadow-xl z-20 flex flex-col shrink-0">
-             <div className="p-6 bg-slate-50 border-b border-slate-100">
-                 {/* New Header */}
-                 <h2 className="text-xl font-serif font-bold text-slate-900 leading-tight">Filer för FamilySearch</h2>
-                 <p className="text-[10px] text-slate-500 font-medium mt-1">Klicka och filtrera minnen</p>
-             </div>
-             
-             <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50">
-                 {chunkList.map((chunk, idx) => {
-                     const status = syncStatus[chunk.partNumber] || 'waiting';
-                     const percentFilled = Math.min(100, (chunk.estimatedSizeMB / settings.maxChunkSizeMB) * 100);
-                     const colorClass = CHUNK_COLORS[idx % CHUNK_COLORS.length];
-                     const borderClass = CHUNK_BORDER_COLORS[idx % CHUNK_BORDER_COLORS.length];
-                     
+                 if (isCompact) {
                      return (
                          <div 
-                            key={idx}
-                            onClick={() => setActiveChunkFilter(activeChunkFilter === idx ? null : idx)}
-                            className={`relative rounded-2xl overflow-hidden bg-white border-2 transition-all cursor-pointer hover:shadow-lg ${activeChunkFilter === idx ? 'ring-2 ring-offset-2 ring-indigo-500 border-indigo-500' : borderClass}`}
+                            key={chunk.id}
+                            onClick={toggleOverlay}
+                            className={`w-10 h-10 mx-auto my-2 rounded-full flex items-center justify-center text-xs font-bold shadow-sm cursor-pointer hover:scale-110 transition-transform ${isGreen ? 'bg-emerald-500 text-white' : isOptimizing ? 'bg-amber-100 text-amber-600 animate-pulse' : 'bg-white text-slate-600'}`}
+                            title={chunk.title}
                          >
-                             {/* Bucket Fill - TOP TO BOTTOM */}
-                             <div 
-                                className={`absolute top-0 left-0 right-0 transition-all duration-1000 ease-in-out opacity-10 ${colorClass}`}
-                                style={{ height: `${percentFilled}%` }}
-                             ></div>
-
-                             <div className="relative p-4 z-10">
-                                 <div className="flex justify-between items-start mb-2">
-                                     <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-sm ${colorClass}`}>
-                                         {idx + 1}
-                                     </div>
-                                     <div className="text-right">
-                                         <span className="text-xs font-bold text-slate-900 block">{chunk.estimatedSizeMB.toFixed(1)} MB</span>
-                                         {/* Updated Info: Chunk Title instead of "Förberedd..." */}
-                                         <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[120px] block">{chunk.title}</span>
-                                     </div>
-                                 </div>
-                                 
-                                 {/* Bottom Row Info */}
-                                 <div className="flex items-center justify-between mt-3">
-                                      <p className="text-[10px] text-slate-500 font-bold bg-slate-100 px-2 py-1 rounded">{chunk.items.length} sidor</p>
-
-                                      {/* Status Indicator */}
-                                      <div className="flex items-center space-x-2 text-[10px] font-bold uppercase tracking-wide">
-                                          {status === 'synced' ? (
-                                              <span className="text-emerald-600 flex items-center"><i className="fas fa-check-circle mr-1"></i> Klar</span>
-                                          ) : status === 'uploading' ? (
-                                              <span className="text-blue-600 flex items-center"><i className="fas fa-circle-notch fa-spin mr-1"></i> Sparar...</span>
-                                          ) : chunk.isFullyOptimized ? (
-                                              <span className="text-slate-500 flex items-center"><i className="fas fa-check mr-1"></i> Redo</span>
-                                          ) : (
-                                              <span className="text-amber-500 flex items-center"><i className="fas fa-compress-arrows-alt fa-spin mr-1"></i> Optimerar...</span>
-                                          )}
-                                      </div>
-                                 </div>
-                             </div>
+                             {chunk.id}
                          </div>
                      );
-                 })}
-             </div>
+                 }
+
+                 return (
+                     <div key={chunk.id} className={`group bg-white border-b border-slate-100 ${borderColor}`}>
+                         {/* Header for Chunk */}
+                         <div 
+                            onClick={() => setActiveChunkFilter(activeChunkFilter === chunk.id ? null : chunk.id)}
+                            className={`px-4 py-3 flex justify-between items-center cursor-pointer hover:bg-slate-50 transition-colors ${activeChunkFilter === chunk.id ? 'bg-slate-50' : ''}`}
+                         >
+                             <div className="flex items-center space-x-2">
+                                 <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold ${isGreen ? 'bg-emerald-100 text-emerald-700' : isOptimizing ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-600'}`}>
+                                     {chunk.id}
+                                 </span>
+                                 <span className="text-xs font-bold text-slate-700">Del {chunk.id}</span>
+                             </div>
+                             
+                             <div className="flex items-center space-x-2">
+                                 {chunk.isUploading && <i className="fas fa-circle-notch fa-spin text-indigo-500 text-xs"></i>}
+                                 {chunk.isSynced && <i className="fas fa-check text-emerald-500 text-xs"></i>}
+                                 <span className="text-[10px] font-mono text-slate-400">{isOptimizing ? 'Beräknar...' : `${sizeMB} MB`}</span>
+                             </div>
+                         </div>
+
+                         {/* File List inside Chunk */}
+                         <div className="px-4 pb-3 space-y-1">
+                             {chunk.items.map(file => (
+                                 <div key={file.id} className="flex justify-end items-center text-[10px] text-slate-500 group/file">
+                                     <span className="truncate max-w-[180px] text-right dir-rtl">{file.name}</span>
+                                     <div className="w-1.5 h-1.5 rounded-full bg-slate-300 ml-2 group-hover/file:bg-indigo-400"></div>
+                                 </div>
+                             ))}
+                             {isOptimizing && (
+                                 <div className="text-[10px] text-amber-500 text-right italic animate-pulse pr-2">
+                                     Optimerar gränser...
+                                 </div>
+                             )}
+                         </div>
+                     </div>
+                 );
+             })}
              
-             {/* Footer with Big Custom Share Button */}
-             <div className="p-4 bg-white border-t border-slate-100">
+             {/* Fallback if no chunks yet (during initial load) */}
+             {chunks.length === 0 && items.length > 0 && (
+                 <div className="p-4 text-center text-xs text-slate-400 italic">
+                     <i className="fas fa-circle-notch fa-spin mr-2"></i>
+                     Analyserar filer...
+                 </div>
+             )}
+        </div>
+        
+        <div className={`p-4 bg-white border-t border-slate-100 ${isCompact ? 'flex justify-center' : ''}`}>
+             {!isCompact ? (
                  <button 
                     onClick={() => (window as any).triggerShare?.()}
                     className="w-full text-left bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-lg rounded-[1.5rem] p-4 transition-all group"
@@ -432,7 +484,121 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                         </div>
                     </div>
                  </button>
+             ) : (
+                 <button onClick={() => (window as any).triggerShare?.()} className="w-10 h-10 bg-indigo-50 hover:bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 transition-colors">
+                     <i className="fas fa-share-nodes"></i>
+                 </button>
+             )}
+        </div>
+      </>
+  );
+
+  return (
+    <>
+      <div className="flex h-full bg-[#f0f2f5] overflow-hidden" onClick={() => setSelectedIds(new Set())}>
+         {isProcessing && (
+            <div className="fixed inset-0 z-[60] bg-white/80 backdrop-blur-sm flex items-center justify-center">
+                <div className="flex flex-col items-center">
+                    <i className="fas fa-circle-notch fa-spin text-4xl text-indigo-600 mb-4"></i>
+                    <p className="font-bold text-slate-700">Bearbetar...</p>
+                </div>
+            </div>
+         )}
+         
+         {/* LEFT: INPUT */}
+         <div className="flex-1 overflow-y-auto scroll-smooth relative border-r border-slate-200 min-w-[200px]">
+             <div className="p-8 pb-32">
+                <div className="flex justify-between items-center mb-8">
+                    <div className="flex items-center space-x-4 max-w-[80%]">
+                        <div className="shrink-0">
+                            <AppLogo variant="phase2" className="w-20 h-20" />
+                        </div>
+                        <div>
+                            <h2 className="text-2xl font-serif font-bold text-slate-900 leading-tight break-words whitespace-normal">Berätta kortfattat</h2>
+                            <p className="text-sm text-slate-500 font-medium mt-1">Klicka och skriv</p>
+                        </div>
+                    </div>
+                    {activeChunkFilter !== null && (
+                        <button onClick={() => setActiveChunkFilter(null)} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded-full font-bold text-slate-600 shrink-0">
+                            Visa alla
+                        </button>
+                    )}
+                </div>
+
+                {/* Toolbar */}
+                {selectedIds.size > 0 && (
+                    <div className="sticky top-4 z-40 bg-slate-900 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center justify-between animate-in slide-in-from-top-4 mb-6 mx-auto max-w-lg">
+                        <span className="font-bold text-sm">{selectedIds.size} valda</span>
+                        <div className="flex space-x-4">
+                            <button onClick={(e) => { e.stopPropagation(); handleInsertAfterSelection(); }} className="hover:text-emerald-400 font-bold text-xs flex items-center space-x-1"><i className="fas fa-plus-circle"></i> <span>Lägg till</span></button>
+                            {selectedIds.size > 1 && <button onClick={handleMergeItems} className="hover:text-indigo-300 font-bold text-xs flex items-center space-x-1"><i className="fas fa-object-group"></i> <span>Slå ihop</span></button>}
+                            <button onClick={() => { onUpdateItems(items.filter(i => !selectedIds.has(i.id))); setSelectedIds(new Set()); }} className="hover:text-red-400 font-bold text-xs flex items-center space-x-1"><i className="fas fa-trash"></i> <span>Ta bort</span></button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Tiles Grid */}
+                <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 select-none">
+                    {/* Add Button */}
+                    <button 
+                        onClick={() => onOpenSourceSelector(null)}
+                        className="aspect-[210/297] rounded-lg border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all group bg-white"
+                    >
+                        <div className="mb-2 transform group-hover:scale-110 transition-transform">
+                            <AppLogo variant="phase1" className="w-12 h-12" />
+                        </div>
+                        <div className="w-8 h-8 rounded-full bg-slate-100 group-hover:bg-white group-hover:shadow-md flex items-center justify-center mb-2 transition-all">
+                            <i className="fas fa-plus text-lg"></i>
+                        </div>
+                        <span className="text-sm font-bold uppercase tracking-wider text-center px-2">Lägg till<br/>minne</span>
+                    </button>
+
+                    {filteredItems.map((item, index) => {
+                        const originalIndex = items.findIndex(i => i.id === item.id);
+                        const chunk = getChunkForItem(item.id);
+                        // Simplified chunk info for tile
+                        const chunkInfo = chunk ? { 
+                            chunkIndex: chunk.id, 
+                            colorClass: CHUNK_COLORS[(chunk.id - 1) % CHUNK_COLORS.length].replace('border-', 'bg-'), 
+                            isTooLarge: false 
+                        } : undefined;
+
+                        return (
+                            <Tile 
+                                key={item.id} id={`tile-${item.id}`} item={item} index={originalIndex}
+                                isSelected={selectedIds.has(item.id)}
+                                onClick={(e: React.MouseEvent) => handleSelection(e, item, originalIndex)}
+                                onEdit={() => setEditingItem(item)}
+                                onSplit={() => handleSplitPdf(item, originalIndex)}
+                                onRemove={() => onUpdateItems(items.filter(i => i.id !== item.id))}
+                                onDragStart={(e: any) => handleDragStart(e, originalIndex)}
+                                onDragOver={(e: any) => handleDragOver(e, originalIndex)}
+                                chunkInfo={chunkInfo}
+                            />
+                        );
+                    })}
+                </div>
              </div>
+         </div>
+
+         {/* RIGHT: OUTPUT (Responsive Container) */}
+         <div 
+            ref={rightColumnRef} 
+            className={`bg-white border-l border-slate-200 shadow-xl z-20 flex flex-col shrink-0 transition-all duration-300 relative ${isSidebarCompact ? 'w-16' : 'w-80'}`}
+         >
+             {renderFilesList(isSidebarCompact)}
+
+             {/* OVERLAY for Compact Mode Expansion */}
+             {isSidebarCompact && showSidebarOverlay && (
+                 <div className="absolute top-0 right-full w-80 h-full bg-white border-r border-slate-200 shadow-2xl z-30 flex flex-col animate-in slide-in-from-right-4">
+                     <div className="flex justify-end p-2 border-b border-slate-100">
+                         <button onClick={() => setShowSidebarOverlay(false)} className="text-slate-400 hover:text-slate-600 p-2">
+                             <i className="fas fa-times"></i>
+                         </button>
+                     </div>
+                     {renderFilesList(false)}
+                 </div>
+             )}
          </div>
       </div>
 
@@ -450,11 +616,11 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   );
 };
 
-// ... (Rest of component remains unchanged)
+// ... Tile, RichTextListEditor, EditModal, SidebarThumbnail (Unchanged)
 const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove, onDragStart, onDragOver, chunkInfo }: any) => {
   const groupColor = stringToColor(item.id.split('-')[0] + (item.id.split('-')[1] || ''));
   const showSplit = (item.type === FileType.PDF || item.type === FileType.GOOGLE_DOC) && (item.pageCount === undefined || item.pageCount > 1);
-  const chunkColor = chunkInfo?.colorClass || 'bg-slate-400';
+  const chunkColor = chunkInfo?.colorClass || 'bg-slate-300'; // Default gray if not chunked yet
   const displaySizeMB = item.processedSize ? (item.processedSize / (1024*1024)).toFixed(2) : ((item.size || 0) / (1024*1024)).toFixed(2);
   const isEdited = item.pageMeta && Object.keys(item.pageMeta).length > 0;
   const isCached = !!item.processedBuffer;
@@ -477,9 +643,9 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
              )}
              <div className="absolute inset-0 bg-transparent z-10"></div>
           </div>
+          {/* Chunk Indicator Dot */}
           <div className="absolute top-2 left-2 flex flex-col gap-1 items-start z-20 pointer-events-none">
               <div className={`w-3 h-3 rounded-full shadow-sm ${chunkColor}`}></div>
-              {chunkInfo?.isTooLarge && (<div className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center shadow-lg animate-pulse" title="För stor"><i className="fas fa-exclamation text-white text-[10px]"></i></div>)}
           </div>
           <div className={`absolute top-2 right-2 flex flex-col gap-2 transition-opacity z-30 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
               <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="w-8 h-8 bg-indigo-600 text-white rounded-full shadow-md flex items-center justify-center hover:bg-indigo-700"><i className="fas fa-pen text-xs"></i></button>
@@ -499,7 +665,6 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
   );
 };
 
-// ... RichTextListEditor, EditModal, SidebarThumbnail ...
 const RichTextListEditor = ({ lines, onChange, onFocusLine, focusedLineId }: { lines: RichTextLine[], onChange: (l: RichTextLine[]) => void, onFocusLine: (id: string | null) => void, focusedLineId: string | null }) => {
     const handleTextChange = (id: string, newText: string) => onChange(lines.map(l => l.id === id ? { ...l, text: newText } : l));
     const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
