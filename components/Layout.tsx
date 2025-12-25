@@ -44,16 +44,16 @@ const Layout: React.FC<LayoutProps> = ({
       <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 z-40 relative">
         
         {/* Left: Logo & Title */}
-        <div className="flex items-center w-1/3 relative group cursor-pointer" onClick={onBack}>
+        <div className="flex items-center max-w-[40%] relative group cursor-pointer" onClick={onBack}>
            {/* Logo - Large, breaking the bounds (-ml and large width) */}
-           <div className="relative -ml-6 -mt-2 z-50 transition-transform group-hover:scale-105">
+           <div className="relative -ml-6 -mt-2 z-50 transition-transform group-hover:scale-105 shrink-0">
               <AppLogo variant="olive" className="w-24 h-24 text-slate-900 drop-shadow-lg" />
            </div>
            
            {/* Title - Dynamic: Shows App Name OR Book Title */}
-           <div className="flex flex-col justify-center -ml-1 pl-2 drop-shadow-md">
+           <div className="flex flex-col justify-center -ml-1 pl-2 drop-shadow-md min-w-0">
               {currentBookTitle ? (
-                 <h1 className="font-serif font-bold text-slate-800 text-xl md:text-2xl truncate max-w-[300px] leading-tight">
+                 <h1 className="font-serif font-bold text-slate-800 text-base md:text-lg line-clamp-3 leading-tight whitespace-normal break-words" title={currentBookTitle}>
                     {currentBookTitle}
                  </h1>
               ) : (
@@ -67,7 +67,7 @@ const Layout: React.FC<LayoutProps> = ({
         </div>
 
         {/* Center: Global Actions / Navigation */}
-        <div className="flex items-center justify-center space-x-2 w-1/3">
+        <div className="flex items-center justify-center space-x-2 flex-1 min-w-0 px-4">
            {user && (
              <>
                {/* Show book specific controls if requested */}
@@ -81,11 +81,11 @@ const Layout: React.FC<LayoutProps> = ({
                    
                    {/* Title Editor */}
                    {currentBookTitle !== undefined && onUpdateBookTitle && (
-                      <div className="ml-4 pl-4 border-l border-slate-200 hidden xl:block">
+                      <div className="ml-4 pl-4 border-l border-slate-200 hidden xl:block shrink-1 min-w-[100px]">
                          <input 
                            value={currentBookTitle}
                            onChange={(e) => onUpdateBookTitle(e.target.value)}
-                           className="text-sm font-serif font-bold text-slate-500 bg-transparent outline-none hover:text-indigo-600 focus:text-indigo-600 w-48 truncate placeholder-slate-300"
+                           className="text-sm font-serif font-bold text-slate-500 bg-transparent outline-none hover:text-indigo-600 focus:text-indigo-600 w-full truncate placeholder-slate-300"
                            placeholder="Namnge boken..."
                          />
                       </div>
@@ -97,7 +97,7 @@ const Layout: React.FC<LayoutProps> = ({
         </div>
 
         {/* Right: User Profile OR Login Button */}
-        <div className="w-1/3 flex justify-end relative">
+        <div className="flex justify-end relative shrink-0">
           {user ? (
             <>
               <button 

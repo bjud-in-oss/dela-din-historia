@@ -43,11 +43,11 @@ const App: React.FC = () => {
   const [insertAtIndex, setInsertAtIndex] = useState<number | null>(null);
   const [books, setBooks] = useState<MemoryBook[]>([]);
 
-  // App Settings State
+  // App Settings State - Updated defaults per request
   const [settings, setSettings] = useState<AppSettings>({
-    compressionLevel: 'medium',
-    maxChunkSizeMB: 14.7,
-    safetyMarginPercent: 5 // Default 5% safety margin
+    compressionLevel: 'low',
+    maxChunkSizeMB: 15.0,
+    safetyMarginPercent: 1 
   });
 
   const [browserState, setBrowserState] = useState({
@@ -320,7 +320,7 @@ const App: React.FC = () => {
           return (
             <LandingPage 
                 isGoogleReady={isGoogleReady} 
-                googleLoadError={googleLoadError}
+                googleLoadError={googleLoadError} 
                 isAuthenticated={isAuthenticated}
             />
           );

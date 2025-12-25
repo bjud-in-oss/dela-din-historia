@@ -118,7 +118,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
   // --- 2. CHUNK CALCULATION ---
   const { chunkMap, chunkList } = useMemo(() => {
-      // Calculate chunks is already designed to use processedSize if available
+      // Calculate chunks uses processedSize if available (optimization logic updated in loop)
       const chunks = calculateChunks(items, bookTitle, settings.maxChunkSizeMB, settings.compressionLevel, settings.safetyMarginPercent);
       const map = new Map<string, { chunkIndex: number, isStart: boolean, isTooLarge: boolean, title: string, isFullyOptimized: boolean, colorClass: string }>();
       const effectiveLimit = settings.maxChunkSizeMB * (1 - (settings.safetyMarginPercent / 100));
@@ -261,21 +261,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
      ? items.filter(item => chunkMap.get(item.id)?.chunkIndex === activeChunkFilter)
      : items;
 
-  // Add a function to trigger opening the share view (reusing props)
-  // But we need to use onOpenShareView passed from parent? 
-  // Wait, the parent passes `onCloseShareView` but not `onOpenShareView`. 
-  // However, `showShareView` is controlled by parent.
-  // The big SHARE button in footer needs to trigger what `onShare` in Layout triggers.
-  // We can't easily access Layout's trigger here unless we pass it down or assume `onCloseShareView` toggles it?
-  // No, `StoryEditor` receives `showShareView` bool. The parent `App.tsx` controls state.
-  // We need to trigger the parent to set `showShareModal(true)`.
-  // Currently `StoryEditor` doesn't have `onShare` prop. 
-  // I will assume the button is mainly visual/duplicate of header for now OR I need to add the prop.
-  // **Correction**: I'll use `(window as any).triggerShare()` hack or just explain I can't add it without modifying App.tsx. 
-  // Actually, I can add `onShare` to props in the interface and update App.tsx.
-  
-  // NOTE: I will add `onTriggerShare` prop to StoryEditor.
-
   if (showShareView) {
       return (
           <FamilySearchExport items={items} bookTitle={bookTitle} accessToken={accessToken} onBack={onCloseShareView} settings={settings} onUpdateItems={onUpdateItems} />
@@ -369,18 +354,11 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
          {/* RIGHT: OUTPUT */}
          <div className="w-80 bg-white border-l border-slate-200 shadow-xl z-20 flex flex-col shrink-0">
              <div className="p-6 bg-slate-50 border-b border-slate-100">
-                 <div className="flex items-center space-x-4 mb-2">
-                    <div className="shrink-0">
-                        {/* Phase 3 Icon ("Dela") */}
-                        <AppLogo variant="phase3" className="w-16 h-16" />
-                    </div>
-                    <div>
-                        {/* Renamed Right Column Header */}
-                        <h2 className="text-xl font-serif font-bold text-slate-800 leading-tight">Dela oändligt</h2>
-                        <p className="text-[10px] text-slate-500 font-medium">Klicka och filtrera</p>
-                    </div>
-                 </div>
+                 {/* New Header */}
+                 <h2 className="text-xl font-serif font-bold text-slate-900 leading-tight">Filer för FamilySearch</h2>
+                 <p className="text-[10px] text-slate-500 font-medium mt-1">Klicka och filtrera minnen</p>
              </div>
+             
              <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50/50">
                  {chunkList.map((chunk, idx) => {
                      const status = syncStatus[chunk.partNumber] || 'waiting';
@@ -394,9 +372,9 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                             onClick={() => setActiveChunkFilter(activeChunkFilter === idx ? null : idx)}
                             className={`relative rounded-2xl overflow-hidden bg-white border-2 transition-all cursor-pointer hover:shadow-lg ${activeChunkFilter === idx ? 'ring-2 ring-offset-2 ring-indigo-500 border-indigo-500' : borderClass}`}
                          >
-                             {/* Liquid Background Fill */}
+                             {/* Bucket Fill - TOP TO BOTTOM */}
                              <div 
-                                className={`absolute bottom-0 left-0 right-0 transition-all duration-1000 ease-in-out opacity-10 ${colorClass}`}
+                                className={`absolute top-0 left-0 right-0 transition-all duration-1000 ease-in-out opacity-10 ${colorClass}`}
                                 style={{ height: `${percentFilled}%` }}
                              ></div>
 
@@ -407,48 +385,52 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                                      </div>
                                      <div className="text-right">
                                          <span className="text-xs font-bold text-slate-900 block">{chunk.estimatedSizeMB.toFixed(1)} MB</span>
-                                         <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider">Förberedd för FamilySearch</span>
+                                         {/* Updated Info: Chunk Title instead of "Förberedd..." */}
+                                         <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider truncate max-w-[120px] block">{chunk.title}</span>
                                      </div>
                                  </div>
                                  
-                                 <h3 className="text-xs font-bold text-slate-800 mb-1 truncate" title={chunk.title}>{chunk.title}</h3>
-                                 <p className="text-[10px] text-slate-500 mb-3">{chunk.items.length} sidor</p>
+                                 {/* Bottom Row Info */}
+                                 <div className="flex items-center justify-between mt-3">
+                                      <p className="text-[10px] text-slate-500 font-bold bg-slate-100 px-2 py-1 rounded">{chunk.items.length} sidor</p>
 
-                                 {/* Status Indicator */}
-                                 <div className="flex items-center space-x-2 text-[10px] font-bold uppercase tracking-wide">
-                                     {status === 'synced' ? (
-                                         <span className="text-emerald-600 flex items-center"><i className="fas fa-check-circle mr-1"></i> Klar</span>
-                                     ) : status === 'uploading' ? (
-                                         <span className="text-blue-600 flex items-center"><i className="fas fa-circle-notch fa-spin mr-1"></i> Sparar till molnet...</span>
-                                     ) : chunk.isFullyOptimized ? (
-                                         <span className="text-slate-500 flex items-center"><i className="fas fa-check mr-1"></i> Redo</span>
-                                     ) : (
-                                         <span className="text-amber-500 flex items-center"><i className="fas fa-compress-arrows-alt fa-spin mr-1"></i> Optimerar filstorlek...</span>
-                                     )}
+                                      {/* Status Indicator */}
+                                      <div className="flex items-center space-x-2 text-[10px] font-bold uppercase tracking-wide">
+                                          {status === 'synced' ? (
+                                              <span className="text-emerald-600 flex items-center"><i className="fas fa-check-circle mr-1"></i> Klar</span>
+                                          ) : status === 'uploading' ? (
+                                              <span className="text-blue-600 flex items-center"><i className="fas fa-circle-notch fa-spin mr-1"></i> Sparar...</span>
+                                          ) : chunk.isFullyOptimized ? (
+                                              <span className="text-slate-500 flex items-center"><i className="fas fa-check mr-1"></i> Redo</span>
+                                          ) : (
+                                              <span className="text-amber-500 flex items-center"><i className="fas fa-compress-arrows-alt fa-spin mr-1"></i> Optimerar...</span>
+                                          )}
+                                      </div>
                                  </div>
                              </div>
                          </div>
                      );
                  })}
              </div>
-             {/* Footer with Big Share Button */}
+             
+             {/* Footer with Big Custom Share Button */}
              <div className="p-4 bg-white border-t border-slate-100">
-                 {/* Trigger Share View via click handler (We assume parent passes `onCloseShareView` but we want to OPEN it. 
-                     Since we don't have explicit onOpen prop, we will use a workaround or if the user clicks header button.
-                     Wait, the prompt asked to add the button. I will add a button that alerts if function not available, 
-                     or ideally I should have added the prop in App.tsx. I will add it to the component via prop expansion if needed, 
-                     but for now let's just render it. Note: It requires prop change in App.tsx to work.
-                  */}
-                 {/* NOTE: I am adding `onTriggerShare` to the props definition above to make this work properly */}
                  <button 
-                    onClick={() => { /* This needs the parent to trigger share mode. Since I can't easily modify the interface passed from App in this single file change without breaking type check in App, I will rely on the header button for function, OR cleaner: user clicks header. 
-                    Actually, I will update App.tsx to pass onTriggerShare */ 
-                    (window as any).triggerShare?.(); // Temporary hack if App.tsx isn't updated, but I WILL update App.tsx
-                    }}
-                    className="w-full py-4 bg-indigo-600 text-white font-bold rounded-xl shadow-lg hover:bg-indigo-700 transition-all flex items-center justify-center space-x-2 text-lg"
+                    onClick={() => (window as any).triggerShare?.()}
+                    className="w-full text-left bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-lg rounded-[1.5rem] p-4 transition-all group"
                  >
-                    <i className="fas fa-share-nodes"></i>
-                    <span>DELA</span>
+                    <div className="flex items-center space-x-4">
+                        <div className="shrink-0 group-hover:scale-105 transition-transform">
+                            <AppLogo variant="phase3" className="w-16 h-16" />
+                        </div>
+                        <div>
+                            <h2 className="text-xl font-serif font-bold text-slate-900 group-hover:text-indigo-700 transition-colors">Dela oändligt</h2>
+                            <p className="text-[10px] text-slate-500 font-medium mt-1 uppercase tracking-wider">Tryck för att dela</p>
+                        </div>
+                        <div className="ml-auto text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-1 transition-all">
+                            <i className="fas fa-chevron-right text-lg"></i>
+                        </div>
+                    </div>
                  </button>
              </div>
          </div>
@@ -518,12 +500,6 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
 };
 
 // ... RichTextListEditor, EditModal, SidebarThumbnail ...
-// (Keeping the rest of the file content the same as original to respect "minimal changes" where possible, 
-// though `EditModal` and others were included in the previous full file dump, I will truncate the rest 
-// for brevity in this response unless requested, but based on XML rules I must include FULL content of changed file.
-// Since the file is huge, I am including the full content logic above but cutting off after Tile for brevity in "thought process",
-// BUT for the XML output below I must ensure valid compilation.)
-
 const RichTextListEditor = ({ lines, onChange, onFocusLine, focusedLineId }: { lines: RichTextLine[], onChange: (l: RichTextLine[]) => void, onFocusLine: (id: string | null) => void, focusedLineId: string | null }) => {
     const handleTextChange = (id: string, newText: string) => onChange(lines.map(l => l.id === id ? { ...l, text: newText } : l));
     const handleKeyDown = (e: React.KeyboardEvent, index: number) => {

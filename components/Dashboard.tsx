@@ -72,7 +72,7 @@ const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, o
             </div>
             <div>
                 <h2 className="text-2xl font-serif font-bold text-slate-900 mb-1">Senaste böckerna</h2>
-                <p className="text-xs text-slate-500">Dina pågående berättelser och familjeminnen.</p>
+                <p className="text-xs text-slate-500">Dina pågående berättelser och minnen.</p>
             </div>
           </div>
           
@@ -100,13 +100,11 @@ const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, o
             <div className="aspect-[3/4] w-full rounded-xl border-2 border-dashed border-slate-300 flex flex-col items-center justify-center bg-white/60 hover:bg-indigo-50/40 hover:border-indigo-400 transition-all relative overflow-hidden">
                <div className="transform group-hover:scale-110 transition-transform duration-500 flex flex-col items-center">
                     <AppLogo variant="olive" className="w-10 h-10 mb-2 opacity-60 group-hover:opacity-100 transition-opacity" />
-                    <div className="w-8 h-8 bg-white rounded-full shadow-sm flex items-center justify-center">
+                    <div className="w-8 h-8 bg-white rounded-full shadow-sm flex items-center justify-center mb-2">
                         <i className="fas fa-plus text-sm text-indigo-500"></i>
                     </div>
+                    <span className="font-bold text-sm text-slate-400 group-hover:text-indigo-600 transition-colors">Skapa ny bok</span>
                </div>
-            </div>
-            <div className="px-1 text-center">
-                 <span className="font-bold text-sm text-slate-600 group-hover:text-indigo-600 transition-colors">Skapa ny bok</span>
             </div>
           </div>
 
