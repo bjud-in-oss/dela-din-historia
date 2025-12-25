@@ -2,6 +2,7 @@
 import { DriveFile, FileType } from '../types';
 import { fetchDriveFiles, fetchSharedDrives } from '../services/driveService';
 import React, { useState, useEffect, useRef } from 'react';
+import AppLogo from './AppLogo';
 
 interface FileBrowserProps {
   accessToken: string;
@@ -210,9 +211,15 @@ const FileBrowser: React.FC<FileBrowserProps> = ({
 
   return (
     <div className="flex flex-col h-full bg-white text-slate-900">
-      {/* Header */}
+      {/* Header with "Samla minnen" + Icon */}
       <div className="flex items-center justify-between px-4 py-3 md:px-6 md:py-4 border-b border-slate-100">
-        <h2 className="text-base md:text-lg font-bold">Hämta källor</h2>
+        <div className="flex items-center space-x-3">
+             <div className="w-8 h-8">
+                <AppLogo variant="phase1" className="w-full h-full" />
+             </div>
+             <h2 className="text-lg md:text-xl font-serif font-bold text-slate-800">Samla minnen</h2>
+        </div>
+        
         <div className="flex items-center space-x-2">
            <button onClick={handleAddEmptySource} className="hidden md:inline-block px-3 py-1.5 text-xs font-bold bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors">
              + Tom källa

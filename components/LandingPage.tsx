@@ -62,7 +62,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ isGoogleReady, googleLoadErro
                        <AppLogo variant="phase3" className="w-20 h-20" />
                    </div>
                    <div>
-                       <h3 className="font-bold text-slate-900 text-xl text-left">3. Dela permanent</h3>
+                       <h3 className="font-bold text-slate-900 text-xl text-left">3. Dela oändligt</h3>
                        <p className="text-base text-slate-600 mt-2 leading-relaxed text-left">
                            Spara och dela kostnadsfritt din historia begränsat till dina olika släktgrupper eller till alla på FamilySearch.
                        </p>

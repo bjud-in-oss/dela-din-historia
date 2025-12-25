@@ -12,6 +12,7 @@ import { createFolder, fetchDriveFiles } from './services/driveService';
 declare global {
   interface Window {
     google: any;
+    triggerShare?: () => void;
   }
 }
 
@@ -33,6 +34,9 @@ const App: React.FC = () => {
   const [showShareModal, setShowShareModal] = useState(false); 
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [isCreatingBook, setIsCreatingBook] = useState(false);
+  
+  // Dashboard Intro State
+  const [hideIntro, setHideIntro] = useState(false);
 
   const [insertAtIndex, setInsertAtIndex] = useState<number | null>(null);
   const [books, setBooks] = useState<MemoryBook[]>([]);
@@ -187,6 +191,9 @@ const App: React.FC = () => {
         console.error("Failed to load books", e);
       }
     }
+
+    const savedHideIntro = localStorage.getItem('hide_intro');
+    if (savedHideIntro === 'true') setHideIntro(true);
   }, []);
 
   useEffect(() => {
@@ -194,6 +201,17 @@ const App: React.FC = () => {
       localStorage.setItem('memory_books', JSON.stringify(books));
     }
   }, [books]);
+
+  // Global helper to trigger share from StoryEditor button
+  useEffect(() => {
+    window.triggerShare = () => setShowShareModal(true);
+    return () => { window.triggerShare = undefined; };
+  }, []);
+
+  const toggleIntro = (hide: boolean) => {
+      setHideIntro(hide);
+      localStorage.setItem('hide_intro', String(hide));
+  };
 
   // STRICT FOLDER CREATION LOGIC
   const ensureBookFolder = async (title: string): Promise<string> => {
@@ -284,9 +302,9 @@ const App: React.FC = () => {
      } else if (currentBook) {
          setCurrentBook(null);
      } else {
-         // Logout and return to landing
-         setIsAuthenticated(false);
-         setUser(null);
+         // Return to Dashboard (Home) if in some other state, or logout?
+         // Actually, logo click should just go to dashboard if logged in.
+         setCurrentBook(null);
      }
   };
 
@@ -303,36 +321,38 @@ const App: React.FC = () => {
       }
 
       if (!currentBook) {
+          // DASHBOARD + OPTIONAL INTRO TEXT
           return (
-            <div className="flex flex-col items-center md:items-start justify-center h-full max-w-7xl mx-auto px-8">
-                <div className="w-full flex flex-col md:flex-row gap-12 items-center h-full py-10">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-6">
-                          <AppLogo variant="phase1" className="w-16 h-16" />
-                          <h1 className="text-3xl font-black text-slate-900">Välkommen!</h1>
-                      </div>
-                      <p className="text-xs font-bold text-slate-400 uppercase mb-8">Över generationer i FamilySearch</p>
-                      
-                      <div className="flex items-center gap-4 mb-8">
-                         <img src={user.picture} className="w-16 h-16 rounded-full border-4 border-white shadow-lg" alt="Profile" />
-                         <div>
-                            <h2 className="text-2xl font-bold text-slate-800 tracking-tight">{user.name}</h2>
-                            <p className="text-sm text-slate-500">{user.email}</p>
-                            {!user.accessToken && (
-                               <p className="text-xs text-indigo-600 font-bold mt-1">Drive ej ansluten</p>
-                            )}
-                         </div>
-                      </div>
-                    </div>
-                    
-                    <div className="flex-1 w-full h-full max-h-[700px]">
-                        <Dashboard 
-                            books={books} 
-                            onCreateNew={handleCreateBook} 
-                            onOpenBook={setCurrentBook} 
-                            onUpdateBooks={handleUpdateBooks}
+            <div className="flex flex-col h-full max-w-7xl mx-auto px-4 md:px-8 py-8 w-full">
+                
+                {/* Intro Text Block - Shown if not hidden */}
+                {!hideIntro && (
+                    <div className="mb-12 relative group animate-in slide-in-from-top-4">
+                        <LandingPage 
+                             isGoogleReady={true} 
+                             googleLoadError={false} 
+                             isAuthenticated={false} // Pass false to hide the "Logged in" banner inside component
                         />
+                        <div className="absolute top-4 right-4 md:top-8 md:right-12">
+                             <label className="flex items-center space-x-2 text-xs font-bold text-slate-400 bg-white/80 backdrop-blur px-3 py-1.5 rounded-full cursor-pointer hover:text-slate-600 transition-colors shadow-sm border border-slate-100">
+                                 <input type="checkbox" onChange={(e) => toggleIntro(e.target.checked)} className="rounded text-indigo-600 focus:ring-indigo-500" />
+                                 <span>Dölj introduktionstexten nästa gång</span>
+                             </label>
+                        </div>
                     </div>
+                )}
+                
+                {/* Divider if intro is shown */}
+                {!hideIntro && <div className="h-px bg-slate-200 w-full mb-12"></div>}
+
+                {/* Main Dashboard Grid */}
+                <div className="flex-1 w-full pb-20">
+                    <Dashboard 
+                        books={books} 
+                        onCreateNew={handleCreateBook} 
+                        onOpenBook={setCurrentBook} 
+                        onUpdateBooks={handleUpdateBooks}
+                    />
                 </div>
             </div>
           );
@@ -372,7 +392,7 @@ const App: React.FC = () => {
       onAddSource={() => { setInsertAtIndex(null); setShowSourceSelector(true); }}
       onCreateBook={handleCreateBook}
       onShare={() => setShowShareModal(true)}
-      onBack={isAuthenticated ? handleBack : undefined} // Only show back button if authenticated
+      onBack={handleBack} 
       onOpenSettings={() => setShowSettingsModal(true)}
       activePhase={showShareModal ? 'phase3' : (currentBook ? 'phase2' : 'phase1')}
       googleBtnDesktopRef={headerGoogleBtnDesktopRef}
