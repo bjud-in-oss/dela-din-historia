@@ -1,4 +1,5 @@
 
+
 import { DriveFile, FileType, MemoryBook } from '../types';
 
 const DRIVE_API_URL = 'https://www.googleapis.com/drive/v3';
@@ -91,7 +92,7 @@ export const createFolder = async (accessToken: string, parentId: string, name: 
 };
 
 // Find existing file to avoid duplicates - UPDATED for robust searching
-const findFileInFolder = async (accessToken: string, folderId: string, filename: string): Promise<string | null> => {
+export const findFileInFolder = async (accessToken: string, folderId: string, filename: string): Promise<string | null> => {
     try {
         const query = `name = '${filename}' and '${folderId}' in parents and trashed = false`;
         
@@ -271,16 +272,17 @@ export const saveProjectState = async (accessToken: string, book: MemoryBook) =>
     if (!book.driveFolderId) return;
     
     // Clean data before saving (remove large buffers or blobs)
-    // IMPORTANT: Save 'processedSize' so we don't have to re-calc on load
+    // IMPORTANT: Save 'processedSize' and 'compressionLevelUsed' so we don't have to re-calc on load.
+    // This makes resuming "super stable" as we know the compressed size without re-compressing.
     const cleanBook = {
         ...book,
         items: book.items.map(item => ({
             ...item,
-            processedBuffer: undefined, // Don't save binary cache to JSON
-            blobUrl: undefined, // Cannot save blob URLs
-            fileObj: undefined // Cannot save JS File objects
+            processedBuffer: undefined, // Don't save binary cache to JSON (too heavy)
+            blobUrl: undefined, 
+            fileObj: undefined 
+            // We KEEP processedSize and compressionLevelUsed!
         })),
-        // Clean chunks to avoid saving heavy buffers but keep structure
         chunks: book.chunks?.map(chunk => ({
             ...chunk,
             items: chunk.items.map(item => ({
@@ -301,14 +303,12 @@ export const saveProjectState = async (accessToken: string, book: MemoryBook) =>
 // Helper to find a suitable cover image in a folder
 const findCoverImageForFolder = async (accessToken: string, folderId: string): Promise<string | undefined> => {
     try {
-        // Look for images, excluding processed PDFs if possible (though mimetype filter helps)
-        // Limit to 1 result for speed, but sort by modifiedTime desc to get the LATEST image
         const query = `'${folderId}' in parents and mimeType contains 'image/' and trashed = false`;
         const params = new URLSearchParams({
             q: query,
             fields: 'files(thumbnailLink)',
             pageSize: '1',
-            orderBy: 'modifiedTime desc', // Get the newest image
+            orderBy: 'modifiedTime desc', 
             corpora: 'user',
             supportsAllDrives: 'true',
             includeItemsFromAllDrives: 'true'
@@ -330,20 +330,15 @@ const findCoverImageForFolder = async (accessToken: string, folderId: string): P
 // Scan the 'Dela din historia' root for book folders
 export const listDriveBookFolders = async (accessToken: string): Promise<MemoryBook[]> => {
     try {
-        // 1. Find root - Updated logic in findFileInFolder makes this robust
         const rootId = await findFileInFolder(accessToken, 'root', 'Dela din historia');
         if (!rootId) return [];
 
-        // 2. List folders inside
         const folders = await fetchDriveFiles(accessToken, rootId);
         const folderList = folders.filter(f => f.type === FileType.FOLDER && f.name !== 'Papperskorg');
 
-        // 3. Convert to minimal MemoryBook objects AND fetch covers
-        // Using Promise.all to fetch covers in parallel
         const books = await Promise.all(folderList.map(async (f) => {
             const coverThumb = await findCoverImageForFolder(accessToken, f.id);
             
-            // Create a fake "item" to hold the thumbnail for the Dashboard to see
             const previewItems = coverThumb ? [{
                 id: 'preview-cover',
                 name: 'Omslag',
@@ -354,10 +349,10 @@ export const listDriveBookFolders = async (accessToken: string): Promise<MemoryB
             } as DriveFile] : [];
 
             return {
-                id: f.id, // Use Drive ID as Book ID for robustness
+                id: f.id, 
                 title: f.name,
                 createdAt: f.modifiedTime, 
-                items: previewItems, // Populate with preview item so thumbnail shows
+                items: previewItems, 
                 driveFolderId: f.id
             };
         }));

@@ -89,5 +89,6 @@ export interface MemoryBook {
   driveFolderId?: string; // ID till mappen i Google Drive där boken bor
   settings?: AppSettings; // Bok-specifika inställningar
   chunks?: ChunkData[]; // Persisted chunks
+  optimizationCursor?: number; // Index where optimization stopped
   optimizationHash?: string; // Hash to verify chunks validity
 }

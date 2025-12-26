@@ -1,7 +1,8 @@
 
-import React, { useState, useMemo } from 'react';
-import { DriveFile, AppSettings } from '../types';
-import { generateCombinedPDF, calculateChunks } from '../services/pdfService';
+import React, { useState } from 'react';
+import { DriveFile, AppSettings, ChunkData } from '../types';
+import { generateCombinedPDF } from '../services/pdfService';
+import { fetchFileBlob, findFileInFolder } from '../services/driveService';
 import JSZip from 'jszip';
 import AppLogo from './AppLogo';
 import { ExportedFile } from './StoryEditor';
@@ -10,6 +11,9 @@ import NotebookLMTip from './NotebookLMTip';
 
 interface FamilySearchExportProps {
     items: DriveFile[];
+    chunks: ChunkData[]; // New: Accept stable chunks
+    isOptimizationComplete: boolean;
+    driveFolderId?: string;
     bookTitle: string;
     accessToken: string;
     onBack: () => void;
@@ -18,32 +22,54 @@ interface FamilySearchExportProps {
     exportedFiles?: ExportedFile[];
 }
 
-const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitle, accessToken, onBack, settings, onUpdateItems, exportedFiles = [] }) => {
+const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ 
+    items, chunks, isOptimizationComplete, driveFolderId, 
+    bookTitle, accessToken, onBack, settings, onUpdateItems, exportedFiles = [] 
+}) => {
     const [isExporting, setIsExporting] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 100, msg: '' });
 
-    // Calculate chunks in real-time
-    const chunks = useMemo(() => 
-        calculateChunks(items, bookTitle, settings.maxChunkSizeMB, settings.compressionLevel, settings.safetyMarginPercent), 
-        [items, bookTitle, settings]
-    );
-    
     // Determine if we need ZIP based on number of chunks OR presence of manual exports
     const needsSplit = chunks.length > 1 || exportedFiles.length > 0;
 
     const handleExport = async () => {
+        if (!isOptimizationComplete && chunks.length === 0) {
+            alert("Optimeringen är inte klar än. Gå tillbaka och vänta tills staplarna är gröna eller gråa.");
+            return;
+        }
+
         setIsExporting(true);
         try {
-            if (!needsSplit) {
-                // Simple Single PDF Export
-                setProgress({ current: 0, total: 100, msg: 'Genererar PDF...' });
-                const pdfBytes = await generateCombinedPDF(accessToken, chunks[0].items, chunks[0].title, settings.compressionLevel);
-                const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+            if (!needsSplit && chunks.length === 1) {
+                // Single File Export
+                setProgress({ current: 10, total: 100, msg: 'Hämtar fil...' });
+                
+                let blob: Blob;
+
+                // STRATEGY: Prefer downloading from Drive if synced
+                if (chunks[0].isSynced && driveFolderId) {
+                     setProgress({ current: 30, total: 100, msg: 'Laddar ner från Drive...' });
+                     const fileId = await findFileInFolder(accessToken, driveFolderId, `${chunks[0].title}.pdf`);
+                     if (fileId) {
+                         blob = await fetchFileBlob(accessToken, fileId);
+                     } else {
+                         // Fallback generate
+                         const pdfBytes = await generateCombinedPDF(accessToken, chunks[0].items, chunks[0].title, settings.compressionLevel);
+                         blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+                     }
+                } else {
+                     // Generate locally
+                     setProgress({ current: 30, total: 100, msg: 'Genererar PDF...' });
+                     const pdfBytes = await generateCombinedPDF(accessToken, chunks[0].items, chunks[0].title, settings.compressionLevel);
+                     blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+                }
+
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = `${chunks[0].title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`;
                 a.click();
+
             } else {
                 // ZIP Export for multiple chunks AND manual files
                 const totalSteps = chunks.length + exportedFiles.length;
@@ -55,9 +81,27 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                 // 1. Add PDF Chunks
                 for (let i = 0; i < chunks.length; i++) {
                     currentStep++;
-                    setProgress({ current: currentStep, total: totalSteps, msg: `Genererar del ${i + 1} av ${chunks.length}...` });
-                    const pdfBytes = await generateCombinedPDF(accessToken, chunks[i].items, chunks[i].title, settings.compressionLevel);
-                    zip.file(`${chunks[i].title}.pdf`, pdfBytes);
+                    const chunk = chunks[i];
+                    setProgress({ current: currentStep, total: totalSteps, msg: `Hämtar del ${i + 1}...` });
+                    
+                    let pdfBytes: Uint8Array | ArrayBuffer;
+
+                    // STRATEGY: Prefer downloading from Drive if synced
+                    if (chunk.isSynced && driveFolderId) {
+                         const fileId = await findFileInFolder(accessToken, driveFolderId, `${chunk.title}.pdf`);
+                         if (fileId) {
+                             const blob = await fetchFileBlob(accessToken, fileId);
+                             pdfBytes = await blob.arrayBuffer();
+                         } else {
+                             // Fallback
+                             pdfBytes = await generateCombinedPDF(accessToken, chunk.items, chunk.title, settings.compressionLevel);
+                         }
+                    } else {
+                         // Generate locally
+                         pdfBytes = await generateCombinedPDF(accessToken, chunk.items, chunk.title, settings.compressionLevel);
+                    }
+                    
+                    zip.file(`${chunk.title}.pdf`, pdfBytes);
                 }
 
                 // 2. Add Manually Exported Files (PNGs from Drive)
@@ -65,8 +109,14 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                     currentStep++;
                     setProgress({ current: currentStep, total: totalSteps, msg: `Hämtar ${file.name}...` });
                     try {
-                        // In a real scenario, we might need to fetch the file content again if we don't have it locally.
-                        // Here we rely on the fact that if it was just created, it might be in cache or we skip complex re-fetching logic for this MVP step.
+                        if (driveFolderId) {
+                            const fileId = await findFileInFolder(accessToken, driveFolderId, file.name);
+                            if (fileId) {
+                                const blob = await fetchFileBlob(accessToken, fileId);
+                                const buf = await blob.arrayBuffer();
+                                zip.file(file.name, buf);
+                            }
+                        }
                     } catch (e) {
                         console.warn(`Could not add ${file.name} to zip`);
                     }
@@ -114,12 +164,18 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                                 <p className="opacity-80 font-serif italic text-xs">
                                     {items.length} sidor • {chunks.length} PDF-filer {exportedFiles.length > 0 ? `• ${exportedFiles.length} bilder` : ''}
                                 </p>
+                                {!isOptimizationComplete && (
+                                    <p className="text-amber-300 text-[10px] font-bold mt-2 animate-pulse">
+                                        <i className="fas fa-exclamation-triangle mr-1"></i>
+                                        Optimering pågår fortfarande...
+                                    </p>
+                                )}
                             </div>
                             <div className="shrink-0">
                                 <button 
                                     onClick={handleExport}
                                     disabled={isExporting} 
-                                    className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-indigo-900/50 transition-all flex items-center justify-center space-x-2 disabled:opacity-50 hover:-translate-y-1 text-sm"
+                                    className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-3 rounded-xl font-bold shadow-lg shadow-indigo-900/50 transition-all flex items-center justify-center space-x-2 disabled:opacity-50 hover:-translate-y-1 text-sm disabled:bg-slate-700"
                                 >
                                     {isExporting ? <i className="fas fa-circle-notch fa-spin"></i> : (needsSplit ? <i className="fas fa-file-zipper text-lg"></i> : <i className="fas fa-file-download text-lg"></i>)}
                                     <span>{needsSplit ? 'Ladda ner ZIP' : 'Ladda ner PDF'}</span>
