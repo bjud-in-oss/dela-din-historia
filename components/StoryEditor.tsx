@@ -464,10 +464,12 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   };
 
   // --- OPTIMIZATION STATE ---
-  // Simplified Hash: Only IDs and Order matter for structure. 
-  // 'processedSize' is transient and shouldn't invalidate the structure.
+  // HASH CALCULATION: Includes ID, Processed Size, and METADATA (Text/Layout)
+  // This ensures that if text changes, the hash changes, triggering re-optimization.
   const generateHash = () => {
-      return items.map(i => i.id).join('|');
+      return items.map(i => 
+          `${i.id}-${i.processedSize || 'u'}-${JSON.stringify(i.pageMeta || {})}-${(i.headerText||'').length}-${(i.description||'').length}`
+      ).join('|');
   };
   const currentItemsHash = useMemo(generateHash, [items]);
 
@@ -489,7 +491,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   // --- RECONCILIATION & INIT LOGIC ---
   useEffect(() => {
       // 1. Initial Load from Saved State OR Re-check after modification
-      // If we have saved chunks, we verify them against current items.
       const savedChunks = chunks.length > 0 ? chunks : (currentBook.chunks || []);
       
       let itemIndex = 0;
@@ -506,9 +507,18 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
               break;
           }
 
-          // Check identity of items in this range
+          // Check identity AND CONTENT of items in this range
           const currentSlice = items.slice(itemIndex, itemIndex + chunkLen);
-          const isMatch = currentSlice.every((item, i) => item.id === chunk.items[i].id); 
+          const isMatch = currentSlice.every((item, i) => {
+              const chunkItem = chunk.items[i];
+              // Deep check for content relevant to PDF generation (Metadata/Text)
+              // If text changes, this returns false, invalidating the chunk.
+              const metaMatch = JSON.stringify(item.pageMeta || {}) === JSON.stringify(chunkItem.pageMeta || {});
+              const textMatch = (item.headerText || '') === (chunkItem.headerText || '') &&
+                                (item.description || '') === (chunkItem.description || '');
+              
+              return item.id === chunkItem.id && metaMatch && textMatch;
+          });
           
           if (isMatch) {
               validChunks.push(chunk);
@@ -520,7 +530,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
       // INTELLIGENT GAP FILLING:
       // If the last valid chunk is NOT synced, we discard it to allow refilling.
-      // This forces the optimizer to reconsider the items in that chunk + any new items.
       if (validChunks.length > 0 && !validChunks[validChunks.length - 1].isSynced) {
           const lastChunk = validChunks.pop();
           if (lastChunk) {
@@ -536,7 +545,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
           if (items.length > itemIndex) setOptimizingStatus('Omorganiserar...');
       }
 
-  }, [currentItemsHash, currentBook.id]); // Run when items change order/count or book changes
+  }, [currentItemsHash, currentBook.id]); // Run when hash changes (items/text change) or book changes
 
 
   // --- AUTO SAVE TO DRIVE ---
