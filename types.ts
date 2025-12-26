@@ -64,6 +64,12 @@ export interface DriveFile {
   compressionLevelUsed?: CompressionLevel; // Vilken nivå som användes för cachen
 }
 
+export interface AppSettings {
+  compressionLevel: CompressionLevel;
+  maxChunkSizeMB: number;
+  safetyMarginPercent: number;
+}
+
 export interface MemoryBook {
   id: string;
   title: string;
@@ -71,10 +77,5 @@ export interface MemoryBook {
   items: DriveFile[];
   coverImageId?: string;
   driveFolderId?: string; // ID till mappen i Google Drive där boken bor
-}
-
-export interface AppSettings {
-  compressionLevel: CompressionLevel;
-  maxChunkSizeMB: number;
-  safetyMarginPercent: number;
+  settings?: AppSettings; // Bok-specifika inställningar
 }

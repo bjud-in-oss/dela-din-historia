@@ -23,6 +23,12 @@ interface GoogleUser {
   accessToken?: string;
 }
 
+const DEFAULT_SETTINGS: AppSettings = {
+    compressionLevel: 'low', // Low compression = High Quality by default
+    maxChunkSizeMB: 15.0,
+    safetyMarginPercent: 1 
+};
+
 const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [user, setUser] = useState<GoogleUser | null>(null);
@@ -51,12 +57,8 @@ const App: React.FC = () => {
   const [insertAtIndex, setInsertAtIndex] = useState<number | null>(null);
   const [books, setBooks] = useState<MemoryBook[]>([]);
 
-  // App Settings State
-  const [settings, setSettings] = useState<AppSettings>({
-    compressionLevel: 'low',
-    maxChunkSizeMB: 15.0,
-    safetyMarginPercent: 1 
-  });
+  // GLOBAL App Settings (Default for NEW books)
+  const [globalSettings, setGlobalSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
 
   const [browserState, setBrowserState] = useState({
     currentFolder: 'root',
@@ -90,6 +92,12 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
+    // Load global settings from local storage if available
+    const saved = localStorage.getItem('global_settings');
+    if (saved) {
+        try { setGlobalSettings(JSON.parse(saved)); } catch(e){}
+    }
+
     const clientId = process.env.GOOGLE_CLIENT_ID || '765827205160-ft7dv2ud5ruf2tgft4jvt68dm7eboei6.apps.googleusercontent.com';
     
     if (!clientId) {
@@ -148,6 +156,12 @@ const App: React.FC = () => {
       clearTimeout(timeout);
     };
   }, [isGoogleReady]);
+
+  // Update Global Settings helper
+  const handleUpdateGlobalSettings = (newSettings: AppSettings) => {
+      setGlobalSettings(newSettings);
+      localStorage.setItem('global_settings', JSON.stringify(newSettings));
+  };
 
   // SYNC BOOKS FROM DRIVE ON AUTH
   useEffect(() => {
@@ -251,7 +265,8 @@ const App: React.FC = () => {
         title: title,
         createdAt: new Date().toISOString(),
         items: [],
-        driveFolderId: folderId
+        driveFolderId: folderId,
+        settings: globalSettings // Copy global defaults to new book
       };
 
       setBooks(prev => [newBook, ...prev]);
@@ -281,17 +296,24 @@ const App: React.FC = () => {
           if (book.driveFolderId) {
               const cloudState = await fetchProjectState(user.accessToken, book.driveFolderId);
               if (cloudState) {
-                  setCurrentBook(cloudState);
-                  setBooks(prev => prev.map(b => b.id === book.id ? { ...b, ...cloudState } : b));
+                  // Ensure settings exist, if not use global
+                  const bookWithSettings = {
+                      ...cloudState,
+                      settings: cloudState.settings || globalSettings
+                  };
+                  setCurrentBook(bookWithSettings);
+                  setBooks(prev => prev.map(b => b.id === book.id ? { ...b, ...bookWithSettings } : b));
               } else {
-                  setCurrentBook(book);
+                  // New book opened from folder without project.json
+                  const bookWithSettings = { ...book, settings: globalSettings };
+                  setCurrentBook(bookWithSettings);
               }
           } else {
-             setCurrentBook(book);
+             setCurrentBook({ ...book, settings: book.settings || globalSettings });
           }
       } catch (e) {
           console.error("Failed to load book state", e);
-          setCurrentBook(book); 
+          setCurrentBook({ ...book, settings: book.settings || globalSettings }); 
       } finally {
           setIsLoadingBook(false);
       }
@@ -406,8 +428,8 @@ const App: React.FC = () => {
           showShareView={showShareModal}
           onCloseShareView={() => setShowShareModal(false)}
           onOpenSourceSelector={(idx) => { setInsertAtIndex(idx); setShowSourceSelector(true); }}
-          settings={settings}
-          onUpdateSettings={setSettings}
+          settings={currentBook.settings || globalSettings}
+          onUpdateSettings={(newSettings) => handleUpdateBook({...currentBook, settings: newSettings})}
         />
       );
   };
@@ -498,14 +520,36 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in">
              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-                <h3 className="text-lg font-bold text-slate-900">App-inställningar</h3>
+                <h3 className="text-lg font-bold text-slate-900">Standardinställningar</h3>
                 <button onClick={() => setShowSettingsModal(false)} className="text-slate-400 hover:text-red-500"><i className="fas fa-times"></i></button>
              </div>
              <div className="p-6 space-y-6">
-                <p className="text-sm text-slate-500">De flesta inställningar hittar du nu direkt i arbetsvyn till höger för enklare åtkomst.</p>
+                <p className="text-sm text-slate-500">Dessa inställningar gäller för alla <strong>nya</strong> böcker du skapar. Redan skapade böcker har sina egna inställningar som du hittar inne i boken.</p>
+                
+                <div>
+                   <label className="block text-sm font-bold text-slate-700 mb-2">Standard bildkvalitet</label>
+                   <div className="flex bg-slate-100 rounded p-1">
+                      {(['low', 'medium', 'high'] as CompressionLevel[]).map(level => {
+                          const labels = { low: 'Hög (Låg kompr.)', medium: 'Medel', high: 'Låg (Hög kompr.)' };
+                          return (
+                            <button key={level} onClick={() => handleUpdateGlobalSettings({...globalSettings, compressionLevel: level})} className={`flex-1 py-2 rounded text-xs font-bold transition-all ${globalSettings.compressionLevel === level ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                              {labels[level]}
+                            </button>
+                          );
+                      })}
+                   </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Filgräns FamilySearch</label>
+                  <div className="flex items-center space-x-3">
+                    <input type="number" min="5" max="50" step="0.1" value={globalSettings.maxChunkSizeMB} onChange={(e) => handleUpdateGlobalSettings({...globalSettings, maxChunkSizeMB: parseFloat(e.target.value)})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold"/>
+                    <span className="text-sm font-bold text-slate-600">MB</span>
+                  </div>
+                </div>
              </div>
              <div className="p-4 bg-slate-50 text-right">
-                <button onClick={() => setShowSettingsModal(false)} className="px-6 py-2 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800">Klar</button>
+                <button onClick={() => setShowSettingsModal(false)} className="px-6 py-2 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800">Spara standard</button>
              </div>
           </div>
         </div>
