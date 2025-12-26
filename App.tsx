@@ -301,6 +301,7 @@ const App: React.FC = () => {
   }, []);
 
   const toggleIntroCheckbox = (shouldHide: boolean) => {
+      setHideIntro(shouldHide);
       setHideIntroNextTime(shouldHide);
       localStorage.setItem('hide_intro', String(shouldHide));
   };
@@ -612,7 +613,7 @@ const App: React.FC = () => {
       }}
       onCreateBook={handleInitiateCreateBook}
       onShare={() => setShowShareModal(true)}
-      onBack={handleBack} 
+      onBack={(currentBook || showShareModal) ? handleBack : undefined} 
       onOpenSettings={() => setShowSettingsModal(true)}
       activePhase={showShareModal ? 'phase3' : (currentBook ? 'phase2' : 'phase1')}
       googleBtnDesktopRef={headerGoogleBtnDesktopRef}
@@ -712,9 +713,23 @@ const App: React.FC = () => {
                     <span className="text-sm font-bold text-slate-600">MB</span>
                   </div>
                 </div>
+
+                {/* --- Added Intro Text Toggle --- */}
+                <div className="pt-4 border-t border-slate-100">
+                    <label className="flex items-center space-x-3 cursor-pointer select-none group">
+                        <input 
+                            type="checkbox" 
+                            checked={!hideIntro} 
+                            onChange={(e) => toggleIntroCheckbox(!e.target.checked)}
+                            className="w-5 h-5 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300 cursor-pointer" 
+                        />
+                        <span className="text-sm font-bold text-slate-700 group-hover:text-indigo-600 transition-colors">Visa introduktionstext vid start</span>
+                    </label>
+                    <p className="text-xs text-slate-400 mt-1 ml-8">Visar informationen till höger om dina böcker på startsidan.</p>
+                </div>
              </div>
              <div className="p-4 bg-slate-50 text-right">
-                <button onClick={() => setShowSettingsModal(false)} className="px-6 py-2 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800">Spara standard</button>
+                <button onClick={() => setShowSettingsModal(false)} className="px-6 py-2 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800">Spara</button>
              </div>
           </div>
         </div>
