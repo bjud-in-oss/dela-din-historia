@@ -52,9 +52,9 @@ const PrivacyPolicy: React.FC<PrivacyPolicyProps> = ({ onClose }) => {
                     <section>
                         <h2 className="text-lg font-bold text-slate-900 mb-3">3. AI och Analys</h2>
                         <p>
-                            Appen använder avancerade AI-modeller för att hjälpa till med sammanfattningar och textförbättring. 
-                            När du använder dessa funktioner skickas den text du valt till Google Gemini API för bearbetning. 
-                            Ingen data sparas permanent av AI-modellen för träning.
+                            Appen använder avancerade AI-modeller (Google Gemini) för att hjälpa till med sammanfattningar och textförbättring. 
+                            När du använder dessa funktioner skickas den text du valt till Google för bearbetning. 
+                            Ingen data sparas permanent av AI-modellen för träning via detta API.
                         </p>
                     </section>
 
@@ -64,6 +64,36 @@ const PrivacyPolicy: React.FC<PrivacyPolicyProps> = ({ onClose }) => {
                             Vi använder lokal lagring i din webbläsare ("LocalStorage") för att komma ihåg att du är inloggad och dina senaste inställningar. 
                             Detta gör att du slipper logga in varje gång du laddar om sidan. Du kan när som helst rensa detta genom att logga ut.
                         </p>
+                    </section>
+
+                    <section>
+                        <h2 className="text-lg font-bold text-slate-900 mb-3">5. Tillgänglighet och Kvoter</h2>
+                        <p>
+                            Denna tjänst tillhandahålls kostnadsfritt som ett hobbyprojekt. AI-funktionerna använder en delad kvot mot Googles tjänster. 
+                            Om många användare använder tjänsten samtidigt kan AI-funktionerna tillfälligt begränsas eller pausas. 
+                            Grundläggande funktioner som att skapa böcker och spara PDF-filer påverkas inte av detta.
+                        </p>
+                    </section>
+
+                    <section className="bg-slate-50 p-6 rounded-xl border border-slate-200 mt-8">
+                        <h2 className="text-lg font-bold text-slate-900 mb-3 flex items-center gap-2">
+                            <i className="fab fa-github text-xl"></i>
+                            Transparens och Öppen Källkod
+                        </h2>
+                        <p className="mb-4">
+                            För att garantera din trygghet är källkoden till denna applikation helt öppen (Open Source). 
+                            Detta innebär att vem som helst med teknisk kunskap kan granska koden för att verifiera att vi inte sparar din data, 
+                            inte har några dolda bakdörrar och att appen gör exakt det vi beskriver ovan.
+                        </p>
+                        <a 
+                            href="https://github.com/bjud-in-oss/dela-din-historia" 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-2 text-indigo-600 font-bold hover:underline"
+                        >
+                            Granska koden på GitHub
+                            <i className="fas fa-external-link-alt text-xs"></i>
+                        </a>
                     </section>
 
                     <div className="pt-8 border-t border-slate-100 flex justify-center">
