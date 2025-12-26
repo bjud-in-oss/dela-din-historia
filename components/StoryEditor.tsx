@@ -48,10 +48,10 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onClick={onClick}
-      className={`relative group aspect-[210/297] rounded-sm shadow-sm transition-all cursor-pointer overflow-hidden
-        ${isSelected ? 'ring-2 ring-indigo-500 z-10' : 'hover:shadow-md hover:scale-[1.02]'}
+      className={`relative group h-52 md:h-80 max-w-full rounded-sm shadow-sm transition-all cursor-pointer overflow-hidden
+        ${isSelected ? 'ring-2 ring-indigo-500 z-10' : 'hover:shadow-md hover:scale-[1.01]'}
         ${chunkInfo ? 'border-l-4 ' + chunkInfo.colorClass.replace('bg-', 'border-') : 'border border-slate-200'}
-        ${isHeader ? 'bg-slate-800' : 'bg-white'}
+        ${isHeader ? 'bg-slate-800 w-full md:w-56' : 'bg-white'}
       `}
     >
         {isHeader ? (
@@ -61,16 +61,18 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
              </div>
         ) : (
              <>
-                 {/* Full Image Container */}
-                 <div className="absolute inset-0 bg-slate-100">
-                     {item.thumbnail || item.blobUrl ? (
-                         <img src={item.thumbnail || item.blobUrl} className="w-full h-full object-cover" alt={item.name} />
-                     ) : (
-                         <div className="w-full h-full flex items-center justify-center text-slate-300">
-                             <i className={`fas ${item.type === FileType.PDF ? 'fa-file-pdf' : 'fa-file-image'} text-4xl`}></i>
-                         </div>
-                     )}
-                 </div>
+                 {/* Image Content - Controls Width of Container */}
+                 {item.thumbnail || item.blobUrl ? (
+                     <img 
+                        src={item.thumbnail || item.blobUrl} 
+                        className="h-full w-auto max-w-full object-contain bg-slate-100" 
+                        alt={item.name} 
+                     />
+                 ) : (
+                     <div className="h-full w-36 md:w-56 flex items-center justify-center text-slate-300 bg-slate-100">
+                         <i className={`fas ${item.type === FileType.PDF ? 'fa-file-pdf' : 'fa-file-image'} text-4xl`}></i>
+                     </div>
+                 )}
 
                  {/* Gradient Overlay for Text Visibility */}
                  <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/70 to-transparent pointer-events-none"></div>
@@ -637,6 +639,17 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       }
 
   }, [currentItemsHash, currentBook.id]); // Run when hash changes (items/text change) or book changes
+
+  // --- RE-OPTIMIZE ON SETTINGS CHANGE ---
+  useEffect(() => {
+      // If settings change, we invalidate the current chunks to force a recalculation
+      // using the new parameters (Mb limit, compression, margins).
+      if (items.length > 0) {
+          setChunks([]);
+          setOptimizationCursor(0);
+          setOptimizingStatus('Inställningar ändrade, startar om...');
+      }
+  }, [settings.maxChunkSizeMB, settings.safetyMarginPercent, settings.compressionLevel]);
 
 
   // --- AUTO SAVE TO DRIVE (WITH ARTIFACT UPLOAD) ---
@@ -1221,8 +1234,8 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                 {selectedIds.size > 0 && (<div className="sticky top-4 z-40 bg-slate-900 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center justify-between animate-in slide-in-from-top-4 mb-6 mx-auto max-w-lg"><span className="font-bold text-sm">{selectedIds.size} valda</span><div className="flex space-x-4"><button onClick={(e) => { e.stopPropagation(); handleInsertAfterSelection(); }} className="hover:text-emerald-400 font-bold text-xs flex items-center space-x-1"><i className="fas fa-plus-circle"></i> <span>Lägg till</span></button>{selectedIds.size > 1 && <button onClick={(e) => { e.stopPropagation(); handleMergeItems(); }} className="hover:text-indigo-300 font-bold text-xs flex items-center space-x-1"><i className="fas fa-object-group"></i> <span>Slå ihop</span></button>}<button onClick={(e) => { e.stopPropagation(); onUpdateItems(items.filter(i => !selectedIds.has(i.id))); setSelectedIds(new Set()); }} className="hover:text-red-400 font-bold text-xs flex items-center space-x-1"><i className="fas fa-trash"></i> <span>Ta bort</span></button></div></div>)}
 
                 {viewMode === 'grid' && (
-                    <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 select-none">
-                        <button onClick={(e) => { e.stopPropagation(); onOpenSourceSelector(null); }} className="aspect-[210/297] rounded-sm border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all group bg-white shadow-sm"><div className="mb-2 transform group-hover:scale-110 transition-transform"><AppLogo variant="phase1" className="w-20 h-20" /></div><div className="w-8 h-8 rounded-full bg-slate-100 group-hover:bg-white group-hover:shadow-md flex items-center justify-center mb-2 transition-all"><i className="fas fa-plus text-lg"></i></div><span className="text-sm font-bold uppercase tracking-wider text-center px-2">Lägg till<br/>minne</span></button>
+                    <div className="flex flex-wrap justify-center md:justify-start gap-4 select-none">
+                        <button onClick={(e) => { e.stopPropagation(); onOpenSourceSelector(null); }} className="h-52 md:h-80 w-36 md:w-56 rounded-sm border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all group bg-white shadow-sm flex-shrink-0"><div className="mb-2 transform group-hover:scale-110 transition-transform"><AppLogo variant="phase1" className="w-20 h-20" /></div><div className="w-8 h-8 rounded-full bg-slate-100 group-hover:bg-white group-hover:shadow-md flex items-center justify-center mb-2 transition-all"><i className="fas fa-plus text-lg"></i></div><span className="text-sm font-bold uppercase tracking-wider text-center px-2">Lägg till<br/>minne</span></button>
                         {filteredItems.map((item, index) => {
                             const originalIndex = items.findIndex(i => i.id === item.id);
                             const chunk = getChunkForItem(item.id);
