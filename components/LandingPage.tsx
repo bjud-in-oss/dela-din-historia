@@ -62,14 +62,10 @@ const LandingPage: React.FC<LandingPageProps> = ({ isGoogleReady, googleLoadErro
                    <div>
                        <h3 className="font-bold text-slate-900 text-xl text-left">Dela oändligt</h3>
                        <p className="text-base text-slate-600 mt-2 leading-relaxed text-left">
-                           Spara och dela kostnadsfritt din historia begränsat till dina olika släktgrupper eller till alla på FamilySearch.
+                           Spara och dela kostnadsfritt din historia begränsat till dina olika släktgrupper eller till alla på FamilySearch. FamilySearch kan bli en länk mellan dig och dina efterkommande efter att du lämnat detta liv och gått vidare.
                        </p>
                    </div>
               </div>
-              
-              <p className="text-lg font-serif text-indigo-900 leading-tight text-left pt-2">
-                  Bevara och dela din historia mellan levande och avlidna generationer med hjälp av FamilySearch.
-              </p>
               
               {/* Toggle Link */}
               {!showDetails && (
@@ -85,6 +81,10 @@ const LandingPage: React.FC<LandingPageProps> = ({ isGoogleReady, googleLoadErro
 
            {/* Right Column: Detailed Text */}
            <div className={`text-slate-600 text-base leading-relaxed text-left space-y-8 ${compact ? 'mt-8' : ''}`}>
+               <p className="text-lg font-serif text-indigo-900 leading-tight border-l-4 border-indigo-200 pl-4 py-2 bg-indigo-50/50 rounded-r-lg">
+                  FamilySearch är världens största kostnadsfria, ideella plattform för släktforskning. Den drivs av Jesu Kristi Kyrka av Sista Dagars Heliga och erbjuder samarbete med miljontals användare och tillgång till miljarder historiska dokument i ett gemensamt globalt släktträd.
+               </p>
+
                <p>
                  Samla, berätta och dela dina viktigaste dokument och bilder på ett ställe, med snabbhet och med integritet. Hantera stora mängder källdokument med både effektivitet och kvalitet. Samla och beskriv minnen med rubriker och bildtexter som visar vad dokumenten innehåller. Gör dina dokument och bilder redo för att sparas som permanenta minnen i FamilySearch och dela dem med integritet till dina nära och kära eller offentligt.
                </p>
@@ -95,10 +95,6 @@ const LandingPage: React.FC<LandingPageProps> = ({ isGoogleReady, googleLoadErro
 
                <p>
                   Genom strategiska samarbeten med kommersiella plattformar som Ancestry, MyHeritage och Geneanet möjliggörs integration av publika uppgifter mellan olika plattformar för att effektivisera användarnas forskning.
-               </p>
-               
-               <p className="text-lg font-serif text-indigo-900 leading-tight border-l-4 border-indigo-200 pl-4 py-2 bg-indigo-50/50 rounded-r-lg">
-                  FamilySearch är världens största kostnadsfria, ideella plattform för släktforskning. Den drivs av Jesu Kristi Kyrka av Sista Dagars Heliga och erbjuder samarbete med miljontals användare och tillgång till miljarder historiska dokument i ett gemensamt globalt släktträd.
                </p>
            </div>
          </div>
