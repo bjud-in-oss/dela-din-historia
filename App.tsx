@@ -7,7 +7,7 @@ import StoryEditor from './components/StoryEditor';
 import Dashboard from './components/Dashboard';
 import AppLogo from './components/AppLogo';
 import LandingPage from './components/LandingPage';
-import { createFolder, fetchDriveFiles, findOrCreateFolder, moveFile } from './services/driveService';
+import { createFolder, fetchDriveFiles, findOrCreateFolder, moveFile, listDriveBookFolders, fetchProjectState } from './services/driveService';
 
 declare global {
   interface Window {
@@ -30,6 +30,8 @@ const App: React.FC = () => {
   const [googleLoadError, setGoogleLoadError] = useState(false);
   
   const [currentBook, setCurrentBook] = useState<MemoryBook | null>(null);
+  const [isLoadingBook, setIsLoadingBook] = useState(false); // New state for loading book details
+
   const [showSourceSelector, setShowSourceSelector] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false); 
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -44,13 +46,12 @@ const App: React.FC = () => {
 
   // Dashboard Intro State
   const [hideIntro, setHideIntro] = useState(false);
-  // Separate state for the checkbox to allow "hide NEXT time" without hiding immediately
   const [hideIntroNextTime, setHideIntroNextTime] = useState(false);
 
   const [insertAtIndex, setInsertAtIndex] = useState<number | null>(null);
   const [books, setBooks] = useState<MemoryBook[]>([]);
 
-  // App Settings State - Updated defaults per request
+  // App Settings State
   const [settings, setSettings] = useState<AppSettings>({
     compressionLevel: 'low',
     maxChunkSizeMB: 15.0,
@@ -64,10 +65,8 @@ const App: React.FC = () => {
     activeTab: 'local' as 'local' | 'drive' | 'shared'
   });
   
-  // Refs for Google Buttons (Desktop vs Mobile)
   const headerGoogleBtnDesktopRef = useRef<HTMLDivElement>(null); 
   const headerGoogleBtnMobileRef = useRef<HTMLDivElement>(null);
-  
   const tokenClientRef = useRef<any>(null);
 
   const decodeJwt = (token: string) => {
@@ -150,70 +149,60 @@ const App: React.FC = () => {
     };
   }, [isGoogleReady]);
 
-  // Execute pending actions when authenticated
+  // SYNC BOOKS FROM DRIVE ON AUTH
   useEffect(() => {
-      if (user?.accessToken && pendingAction) {
-          if (pendingAction === 'createBook') {
-              // Instead of creating immediately, show the modal
-              setShowCreateBookModal(true);
-          } else if (pendingAction === 'addSource') {
-              setShowSourceSelector(true);
+      if (user?.accessToken) {
+          const syncBooks = async () => {
+              const driveBooks = await listDriveBookFolders(user.accessToken!);
+              
+              setBooks(prevLocalBooks => {
+                  // Merge strategy:
+                  // 1. Keep local books if they match an ID from Drive (prefer Drive metadata?)
+                  // 2. Add new books from Drive that aren't local
+                  // 3. Remove local books that shouldn't exist? (Maybe safer to keep them visually but mark as sync issue? For now, we trust Drive listing)
+                  
+                  // Simple approach: Trust Drive list for existence. 
+                  // If we have local detail (items > 0), maybe keep it, but project.json load will override anyway.
+                  
+                  // Map Drive ID to existing local book to preserve some state if needed, 
+                  // but mostly we want to populate the dashboard with what's on Drive.
+                  
+                  const merged = driveBooks.map(dBook => {
+                      const localMatch = prevLocalBooks.find(l => l.title === dBook.title); // Match by title if ID differs (legacy)
+                      if (localMatch) {
+                           return { ...localMatch, driveFolderId: dBook.driveFolderId, id: dBook.id };
+                      }
+                      return dBook;
+                  });
+                  return merged;
+              });
+          };
+          syncBooks();
+          
+          if (pendingAction) {
+              if (pendingAction === 'createBook') setShowCreateBookModal(true);
+              else if (pendingAction === 'addSource') setShowSourceSelector(true);
+              setPendingAction(null);
           }
-          setPendingAction(null);
       }
-  }, [user?.accessToken, pendingAction]);
+  }, [user?.accessToken]);
 
-  // Render buttons when ready
+  // Render buttons
   useEffect(() => {
     if (isGoogleReady && !isAuthenticated) {
       try {
-        // Render Desktop Button (Large width, "Sign in with Google")
         if (headerGoogleBtnDesktopRef.current) {
-            window.google.accounts.id.renderButton(headerGoogleBtnDesktopRef.current, { 
-                theme: "outline", 
-                size: "large", 
-                shape: "pill",
-                width: 250,
-                text: "signin_with" // Default: "Logga in med Google"
-            });
+            window.google.accounts.id.renderButton(headerGoogleBtnDesktopRef.current, { theme: "outline", size: "large", shape: "pill", width: 250, text: "signin_with" });
         }
-        
-        // Render Mobile Button (Small width, "Sign in")
         if (headerGoogleBtnMobileRef.current) {
-            window.google.accounts.id.renderButton(headerGoogleBtnMobileRef.current, { 
-                theme: "outline", 
-                size: "large", 
-                shape: "pill",
-                width: 120, // Smaller width
-                text: "signin" // Renders "Logga in"
-            });
+            window.google.accounts.id.renderButton(headerGoogleBtnMobileRef.current, { theme: "outline", size: "large", shape: "pill", width: 120, text: "signin" });
         }
-      } catch (e) {
-        console.error("Kunde inte rendera Google-knappen", e);
-      }
+      } catch (e) { console.error(e); }
     }
   }, [isGoogleReady, isAuthenticated]);
 
+  // Load local preferences
   useEffect(() => {
-    const savedBooks = localStorage.getItem('memory_books');
-    if (savedBooks) {
-      try {
-        const parsedBooks: MemoryBook[] = JSON.parse(savedBooks);
-        const sanitizedBooks = parsedBooks.map(book => ({
-            ...book,
-            items: book.items.map(item => ({
-                ...item,
-                processedBuffer: undefined, 
-                processedSize: undefined,
-                blobUrl: item.isLocal ? item.blobUrl : undefined
-            }))
-        }));
-        setBooks(sanitizedBooks);
-      } catch (e) {
-        console.error("Failed to load books", e);
-      }
-    }
-
     const savedHideIntro = localStorage.getItem('hide_intro');
     if (savedHideIntro === 'true') {
       setHideIntro(true);
@@ -221,13 +210,6 @@ const App: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => {
-    if (books.length > 0) {
-      localStorage.setItem('memory_books', JSON.stringify(books));
-    }
-  }, [books]);
-
-  // Global helper to trigger share from StoryEditor button
   useEffect(() => {
     window.triggerShare = () => setShowShareModal(true);
     return () => { window.triggerShare = undefined; };
@@ -238,51 +220,35 @@ const App: React.FC = () => {
       localStorage.setItem('hide_intro', String(shouldHide));
   };
 
-  // STRICT FOLDER CREATION LOGIC
   const ensureBookFolder = async (title: string): Promise<string> => {
     if (!user?.accessToken) throw new Error("Ingen åtkomst till Drive");
-    
-    // 1. Check for Root Folder "Dela din historia"
     const rootFiles = await fetchDriveFiles(user.accessToken, 'root');
     let rootFolder = rootFiles.find(f => f.name === 'Dela din historia' && f.type === FileType.FOLDER);
-    
     if (!rootFolder) {
       const rootId = await createFolder(user.accessToken, 'root', 'Dela din historia');
       rootFolder = { id: rootId } as DriveFile;
     }
-
-    // 2. Check/Create Book Subfolder
     const bookFiles = await fetchDriveFiles(user.accessToken, rootFolder.id);
     let bookFolder = bookFiles.find(f => f.name.toLowerCase() === title.toLowerCase() && f.type === FileType.FOLDER);
-
-    if (bookFolder) {
-        throw new Error("DUPLICATE_NAME");
-    }
-
-    const bookId = await createFolder(user.accessToken, rootFolder.id, title);
-    return bookId;
+    if (bookFolder) throw new Error("DUPLICATE_NAME");
+    return await createFolder(user.accessToken, rootFolder.id, title);
   };
 
-  // Triggered when user clicks "Skapa ny bok"
   const handleInitiateCreateBook = () => {
     if (!user?.accessToken) {
        setPendingAction('createBook');
        handleRequestDriveAccess();
        return;
     }
-    // Open modal to ask for name
     setNewBookTitle('');
     setShowCreateBookModal(true);
   };
 
-  // Triggered when user submits the modal
   const handleCreateBookSubmit = async () => {
     const title = newBookTitle.trim();
     if (!title) return;
-
-    // Check duplicate in local state first
     if (books.some(b => b.title.toLowerCase() === title.toLowerCase())) {
-        alert("En bok med detta namn finns redan i din lista.");
+        alert("En bok med detta namn finns redan.");
         return;
     }
 
@@ -290,15 +256,13 @@ const App: React.FC = () => {
     setShowCreateBookModal(false);
     
     try {
-      // Create folder structure immediately
       const folderId = await ensureBookFolder(title);
-
       const newBook: MemoryBook = {
-        id: `book-${Date.now()}`,
+        id: folderId, // Use folder ID as book ID
         title: title,
         createdAt: new Date().toISOString(),
         items: [],
-        driveFolderId: folderId // Store the ID!
+        driveFolderId: folderId
       };
 
       setBooks(prev => [newBook, ...prev]);
@@ -307,47 +271,63 @@ const App: React.FC = () => {
       setShowSourceSelector(true);
     } catch (e: any) {
       if (e.message === "DUPLICATE_NAME") {
-          alert("En mapp med detta namn finns redan på Google Drive under 'Dela din historia'. Välj ett unikt namn.");
-          setShowCreateBookModal(true); // Re-open modal
+          alert("En mapp med detta namn finns redan.");
+          setShowCreateBookModal(true);
       } else {
-          console.error("Kunde inte skapa bokmapp", e);
-          alert("Kunde inte skapa mappen på Drive. Kontrollera dina rättigheter.");
+          alert("Kunde inte skapa mappen på Drive.");
       }
     } finally {
       setIsCreatingBook(false);
     }
   };
 
-  // Handle Safe Deletion with Backup
-  const handleDeleteBook = async (book: MemoryBook) => {
-      // 1. Confirm
-      if (!confirm(`Vill du ta bort boken "${book.title}"?`)) return;
+  // OPEN BOOK: Load state from Drive
+  const handleOpenBook = async (book: MemoryBook) => {
+      if (!user?.accessToken) {
+          alert("Du måste vara inloggad för att öppna böcker.");
+          return;
+      }
+      
+      setIsLoadingBook(true);
+      try {
+          // Attempt to load project.json from the folder
+          if (book.driveFolderId) {
+              const cloudState = await fetchProjectState(user.accessToken, book.driveFolderId);
+              if (cloudState) {
+                  setCurrentBook(cloudState);
+                  // Also update the book in the list in case metadata changed
+                  setBooks(prev => prev.map(b => b.id === book.id ? { ...b, ...cloudState } : b));
+              } else {
+                  // No project file? Just open empty/local version
+                  setCurrentBook(book);
+              }
+          } else {
+             setCurrentBook(book);
+          }
+      } catch (e) {
+          console.error("Failed to load book state", e);
+          setCurrentBook(book); // Fallback
+      } finally {
+          setIsLoadingBook(false);
+      }
+  };
 
-      // 2. Perform Move on Drive if applicable
+  const handleDeleteBook = async (book: MemoryBook) => {
+      if (!confirm(`Vill du ta bort boken "${book.title}"?`)) return;
       if (book.driveFolderId && user?.accessToken) {
           try {
-              // Find "Dela din historia" root
               const rootFiles = await fetchDriveFiles(user.accessToken, 'root');
               let rootFolder = rootFiles.find(f => f.name === 'Dela din historia' && f.type === FileType.FOLDER);
-              
               if (rootFolder) {
-                  // Find/Create "Papperskorg"
                   const trashId = await findOrCreateFolder(user.accessToken, rootFolder.id, "Papperskorg");
-                  
-                  // Move the book folder to Trash
                   await moveFile(user.accessToken, book.driveFolderId, trashId);
-                  
-                  alert(`En säkerhetskopia av boken har sparats i:\n\nDela din historia > Papperskorg > ${book.title}`);
+                  alert(`Boken flyttad till Papperskorgen på Drive.`);
               }
           } catch (e) {
-              console.error("Kunde inte flytta till papperskorgen på Drive", e);
-              alert("Kunde inte säkerhetskopiera till Drive (nätverksfel), men boken tas bort från listan.");
+              alert("Kunde inte flytta på Drive, men tar bort från listan.");
           }
       }
-
-      // 3. Update Local State
       setBooks(prev => prev.filter(b => b.id !== book.id));
-      localStorage.setItem('memory_books', JSON.stringify(books.filter(b => b.id !== book.id)));
   };
 
   const handleAddItemsToBook = (newItems: DriveFile[]) => {
@@ -369,71 +349,51 @@ const App: React.FC = () => {
     setBooks(prev => prev.map(b => b.id === updatedBook.id ? updatedBook : b));
   };
 
-  const handleUpdateBooks = (newBooks: MemoryBook[]) => {
-      setBooks(newBooks);
-      localStorage.setItem('memory_books', JSON.stringify(newBooks));
-  };
-
-  // UNIFIED BACK HANDLER
   const handleBack = () => {
-     if (showShareModal) {
-         setShowShareModal(false);
-     } else if (currentBook) {
-         setCurrentBook(null);
-     } else {
-         setCurrentBook(null); // Already on Dashboard
-     }
+     if (showShareModal) setShowShareModal(false);
+     else setCurrentBook(null);
   };
 
-  // Render Content based on state
   const renderContent = () => {
       if (!isAuthenticated || !user) {
           return (
-            <LandingPage 
-                isGoogleReady={isGoogleReady} 
-                googleLoadError={googleLoadError} 
-                isAuthenticated={isAuthenticated}
-            />
+            <LandingPage isGoogleReady={isGoogleReady} googleLoadError={googleLoadError} isAuthenticated={isAuthenticated} />
+          );
+      }
+
+      if (isLoadingBook) {
+          return (
+             <div className="flex h-full items-center justify-center flex-col bg-[#f8fafc]">
+                 <div className="w-16 h-16 mb-4">
+                     <AppLogo variant="phase2" className="animate-bounce" />
+                 </div>
+                 <p className="text-slate-500 font-bold animate-pulse">Hämtar bokens innehåll från Drive...</p>
+             </div>
           );
       }
 
       if (!currentBook) {
-          // DASHBOARD + OPTIONAL INTRO TEXT (Split Screen)
           return (
             <div className="flex flex-col lg:flex-row h-full w-full overflow-hidden bg-[#f8fafc]">
-                
-                {/* Left Column: Books */}
                 <div className={`flex-1 overflow-y-auto p-4 md:p-8 ${!hideIntro ? 'lg:border-r border-slate-200' : ''}`}>
                     <div className="max-w-7xl mx-auto w-full">
                         <Dashboard 
                             books={books} 
                             onCreateNew={handleInitiateCreateBook} 
-                            onOpenBook={setCurrentBook} 
-                            onUpdateBooks={handleUpdateBooks}
+                            onOpenBook={handleOpenBook} 
+                            onUpdateBooks={setBooks}
                             onDeleteBook={handleDeleteBook}
                         />
                     </div>
                 </div>
-                
-                {/* Right Column: Intro Text (if enabled) */}
                 {!hideIntro && (
                     <div className="w-full lg:w-[45%] xl:w-[40%] bg-white shadow-inner lg:shadow-none flex flex-col shrink-0 overflow-hidden border-t lg:border-t-0 border-slate-200">
                          <div className="flex-1 overflow-y-auto custom-scrollbar">
-                             <LandingPage 
-                                 isGoogleReady={true} 
-                                 googleLoadError={false} 
-                                 isAuthenticated={false} // Pass false to hide the "Logged in" banner inside component
-                                 compact={true} // New prop to remove excess padding
-                            />
+                             <LandingPage isGoogleReady={true} googleLoadError={false} isAuthenticated={false} compact={true} />
                          </div>
                          <div className="p-6 border-t border-slate-100 bg-slate-50 shrink-0">
                              <label className="flex items-center space-x-3 text-sm font-bold text-slate-500 cursor-pointer hover:text-slate-800 transition-colors select-none">
-                                 <input 
-                                    type="checkbox" 
-                                    checked={hideIntroNextTime}
-                                    onChange={(e) => toggleIntroCheckbox(e.target.checked)} 
-                                    className="w-5 h-5 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300" 
-                                 />
+                                 <input type="checkbox" checked={hideIntroNextTime} onChange={(e) => toggleIntroCheckbox(e.target.checked)} className="w-5 h-5 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300" />
                                  <span>Dölj introduktionstexten nästa gång</span>
                              </label>
                          </div>
@@ -452,7 +412,7 @@ const App: React.FC = () => {
                   if (!prevBook) return null;
                   const newItems = typeof newItemsOrUpdater === 'function' ? newItemsOrUpdater(prevBook.items) : newItemsOrUpdater;
                   const updatedBook = { ...prevBook, items: newItems };
-                  setBooks(prevBooks => prevBooks.map(b => b.id === updatedBook.id ? updatedBook : b));
+                  // Don't update global books here to avoid flicker, handled by Editor auto-save or back
                   return updatedBook;
               });
           }}
@@ -469,18 +429,14 @@ const App: React.FC = () => {
 
   return (
     <Layout 
-      user={user} // Can be null now
+      user={user} 
       onLogout={() => { setIsAuthenticated(false); setUser(null); }}
       showBookControls={!!currentBook && isAuthenticated}
       currentBookTitle={currentBook?.title}
       onUpdateBookTitle={currentBook ? (newTitle) => handleUpdateBook({ ...currentBook, title: newTitle }) : undefined}
       onAddSource={() => { 
-          if(!user?.accessToken) {
-              setPendingAction('addSource');
-              handleRequestDriveAccess();
-          } else {
-              setInsertAtIndex(null); setShowSourceSelector(true); 
-          }
+          if(!user?.accessToken) { setPendingAction('addSource'); handleRequestDriveAccess(); } 
+          else { setInsertAtIndex(null); setShowSourceSelector(true); }
       }}
       onCreateBook={handleInitiateCreateBook}
       onShare={() => setShowShareModal(true)}
@@ -518,7 +474,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Create Book Modal */}
       {showCreateBookModal && (
         <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in">
@@ -545,19 +500,8 @@ const App: React.FC = () => {
                              />
                          </div>
                          <div className="flex space-x-3">
-                             <button 
-                                onClick={() => setShowCreateBookModal(false)}
-                                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl transition-colors"
-                             >
-                                Avbryt
-                             </button>
-                             <button 
-                                onClick={handleCreateBookSubmit}
-                                disabled={!newBookTitle.trim()}
-                                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50 shadow-lg shadow-indigo-200"
-                             >
-                                Skapa
-                             </button>
+                             <button onClick={() => setShowCreateBookModal(false)} className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl transition-colors">Avbryt</button>
+                             <button onClick={handleCreateBookSubmit} disabled={!newBookTitle.trim()} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50 shadow-lg shadow-indigo-200">Skapa</button>
                          </div>
                      </div>
                  </div>
@@ -565,7 +509,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      {/* Settings Modal */}
       {showSettingsModal && (
         <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in">
@@ -581,14 +524,6 @@ const App: React.FC = () => {
                     <input type="number" min="5" max="50" step="0.1" value={settings.maxChunkSizeMB} onChange={(e) => setSettings({...settings, maxChunkSizeMB: parseFloat(e.target.value)})} className="w-24 px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold"/>
                     <span className="text-sm font-bold text-slate-600">MB</span>
                   </div>
-                </div>
-                <div>
-                   <label className="block text-sm font-bold text-slate-700 mb-2">Säkerhetsmarginal (%)</label>
-                   <p className="text-xs text-slate-500 mb-3">PDF-formatet lägger till lite extra data utöver bilderna.</p>
-                   <div className="flex items-center space-x-4">
-                      <input type="range" min="0" max="20" step="1" value={settings.safetyMarginPercent} onChange={(e) => setSettings({...settings, safetyMarginPercent: parseInt(e.target.value)})} className="flex-1 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600"/>
-                      <span className="text-sm font-bold text-indigo-600 w-12 text-right">{settings.safetyMarginPercent}%</span>
-                   </div>
                 </div>
                 <div>
                    <label className="block text-sm font-bold text-slate-700 mb-2">Komprimeringsgrad</label>

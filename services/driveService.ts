@@ -1,5 +1,5 @@
 
-import { DriveFile, FileType } from '../types';
+import { DriveFile, FileType, MemoryBook } from '../types';
 
 const DRIVE_API_URL = 'https://www.googleapis.com/drive/v3';
 
@@ -108,7 +108,13 @@ const findFileInFolder = async (accessToken: string, folderId: string, filename:
     }
 };
 
-export const uploadToDrive = async (accessToken: string, folderId: string, filename: string, blob: Blob) => {
+export const uploadToDrive = async (
+    accessToken: string, 
+    folderId: string, 
+    filename: string, 
+    blob: Blob,
+    mimeType: string = 'application/pdf'
+) => {
   // 1. Check if file exists
   const existingFileId = await findFileInFolder(accessToken, folderId, filename);
 
@@ -118,7 +124,7 @@ export const uploadToDrive = async (accessToken: string, folderId: string, filen
     : `https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable`;
 
   const metadata: any = {
-    mimeType: 'application/pdf'
+    mimeType: mimeType
   };
   
   // Only set name and parent on creation, or if we want to rename/move (we don't here)
@@ -132,7 +138,7 @@ export const uploadToDrive = async (accessToken: string, folderId: string, filen
     headers: {
       'Authorization': `Bearer ${accessToken}`,
       'Content-Type': 'application/json; charset=UTF-8',
-      'X-Upload-Content-Type': 'application/pdf',
+      'X-Upload-Content-Type': mimeType,
       'X-Upload-Content-Length': blob.size.toString()
     },
     body: JSON.stringify(metadata)
@@ -140,8 +146,6 @@ export const uploadToDrive = async (accessToken: string, folderId: string, filen
 
   const uploadUrl = initResponse.headers.get('Location');
   if (!uploadUrl) {
-      // Sometimes PATCH doesn't return Location if just metadata, but for uploadType=resumable it should.
-      // If it fails for existing file, fallback to create new? No, throw error.
       throw new Error('Kunde inte initiera uppladdning till Drive');
   }
 
@@ -166,7 +170,7 @@ export const fetchSharedDrives = async (accessToken: string): Promise<DriveFile[
   }));
 };
 
-// --- NEW FUNCTIONS FOR MOVING FOLDERS ---
+// --- NEW FUNCTIONS FOR PERSISTENCE ---
 
 export const findOrCreateFolder = async (accessToken: string, parentId: string, folderName: string): Promise<string> => {
     const existingId = await findFileInFolder(accessToken, parentId, folderName);
@@ -197,5 +201,70 @@ export const moveFile = async (accessToken: string, fileId: string, newParentId:
 
     if (!updateRes.ok) {
         throw new Error("Kunde inte flytta filen.");
+    }
+};
+
+// Fetches the 'project.json' from a book folder to restore state
+export const fetchProjectState = async (accessToken: string, folderId: string): Promise<MemoryBook | null> => {
+    const fileId = await findFileInFolder(accessToken, folderId, 'project.json');
+    if (!fileId) return null;
+
+    try {
+        const blob = await fetchFileBlob(accessToken, fileId);
+        const text = await blob.text();
+        const bookData = JSON.parse(text);
+        
+        // Ensure driveFolderId is correct (might have moved)
+        return { ...bookData, driveFolderId: folderId };
+    } catch (e) {
+        console.error("Corrupt project file", e);
+        return null;
+    }
+};
+
+// Saves the 'project.json' to the book folder
+export const saveProjectState = async (accessToken: string, book: MemoryBook) => {
+    if (!book.driveFolderId) return;
+    
+    // Clean data before saving (remove large buffers or blobs)
+    const cleanBook = {
+        ...book,
+        items: book.items.map(item => ({
+            ...item,
+            processedBuffer: undefined, // Don't save binary cache to JSON
+            blobUrl: undefined, // Cannot save blob URLs
+            fileObj: undefined // Cannot save JS File objects
+        }))
+    };
+
+    const jsonString = JSON.stringify(cleanBook, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    
+    await uploadToDrive(accessToken, book.driveFolderId, 'project.json', blob, 'application/json');
+};
+
+// Scan the 'Dela din historia' root for book folders
+export const listDriveBookFolders = async (accessToken: string): Promise<MemoryBook[]> => {
+    try {
+        // 1. Find root
+        const rootId = await findFileInFolder(accessToken, 'root', 'Dela din historia');
+        if (!rootId) return [];
+
+        // 2. List folders inside
+        const folders = await fetchDriveFiles(accessToken, rootId);
+        
+        // 3. Convert to minimal MemoryBook objects
+        return folders
+            .filter(f => f.type === FileType.FOLDER && f.name !== 'Papperskorg')
+            .map(f => ({
+                id: f.id, // Use Drive ID as Book ID for robustness
+                title: f.name,
+                createdAt: f.modifiedTime, // Drive modified time
+                items: [], // Will be loaded on open
+                driveFolderId: f.id
+            }));
+    } catch (e) {
+        console.error("Failed to list books from Drive", e);
+        return [];
     }
 };

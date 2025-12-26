@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { DriveFile, FileType, TextConfig, RichTextLine, PageMetadata, AppSettings, MemoryBook } from '../types';
 import { generateCombinedPDF, splitPdfIntoPages, mergeFilesToPdf, createPreviewWithOverlay, getPdfPageCount, DEFAULT_TEXT_CONFIG, DEFAULT_FOOTER_CONFIG, getPdfDocument, renderPdfPageToCanvas, extractHighQualityImage, processFileForCache, generatePageThumbnail } from '../services/pdfService';
-import { uploadToDrive } from '../services/driveService';
+import { uploadToDrive, saveProjectState } from '../services/driveService';
 import FamilySearchExport from './FamilySearchExport';
 import AppLogo from './AppLogo';
 
@@ -69,11 +69,33 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [activeChunkFilter, setActiveChunkFilter] = useState<number | null>(null);
-  
+  const [autoSaveStatus, setAutoSaveStatus] = useState<string>('Sparat');
+
   // Layout State
   const [isSidebarCompact, setIsSidebarCompact] = useState(false);
   const [showSidebarOverlay, setShowSidebarOverlay] = useState(false);
   const rightColumnRef = useRef<HTMLDivElement>(null);
+
+  // --- AUTO SAVE TO DRIVE ---
+  // Debounce save when items or title changes
+  useEffect(() => {
+    if (!currentBook.driveFolderId) return;
+    
+    setAutoSaveStatus('Sparar...');
+    const handler = setTimeout(async () => {
+        try {
+            const bookToSave = { ...currentBook, items, title: bookTitle };
+            await saveProjectState(accessToken, bookToSave);
+            setAutoSaveStatus('Sparat på Drive');
+        } catch (e) {
+            console.error("Auto-save failed", e);
+            setAutoSaveStatus('Kunde inte spara');
+        }
+    }, 2000); // 2 second delay
+
+    return () => clearTimeout(handler);
+  }, [items, bookTitle, currentBook.driveFolderId]);
+
 
   // --- OPTIMIZATION STATE ---
   const [chunks, setChunks] = useState<ChunkData[]>([]);
@@ -91,177 +113,84 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   useEffect(() => {
     let isCancelled = false;
     const limitBytes = settings.maxChunkSizeMB * 1024 * 1024;
-    // Threshold to switch from math estimate to actual PDF generation
-    const VERIFY_THRESHOLD_BYTES = limitBytes * 0.85; // Verify last 15% precisely
-
-    // Constants for estimation (used when below threshold)
+    const VERIFY_THRESHOLD_BYTES = limitBytes * 0.85; 
     const EST_PDF_OVERHEAD_BASE = 15000; 
     const EST_OVERHEAD_PER_PAGE = 3000; 
 
     const processNextStep = async () => {
         if (isCancelled) return;
-
-        // 1. Check if done
         if (optimizationCursor >= items.length) {
             setOptimizingStatus('');
             return;
         }
-
-        // 2. Wait for previous chunk to settle (prevents UI jumping)
-        if (chunks.length > 0 && !chunks[chunks.length - 1].isOptimized) {
-            return;
-        }
+        if (chunks.length > 0 && !chunks[chunks.length - 1].isOptimized) return;
 
         const currentChunkId = chunks.length + 1;
-        
         let currentBatch: DriveFile[] = [];
         let estimatedAccumulator = EST_PDF_OVERHEAD_BASE;
         let nextCursor = optimizationCursor;
         let finalBatchSizeBytes = 0;
         let chunkIsFull = false;
 
-        // Loop through items starting from cursor
         while (nextCursor < items.length) {
              const item = items[nextCursor];
              setOptimizingStatus(`Del ${currentChunkId}: Förbereder ${item.name}...`);
-
-             // A. ENSURE PROCESSED (Background Work)
-             // We ensure the item is compressed/cached before adding to batch
              let itemSize = item.processedSize;
-             
              if (!item.processedBuffer || item.compressionLevelUsed !== settings.compressionLevel) {
                  try {
                      const { buffer, size } = await processFileForCache(item, accessToken, settings.compressionLevel);
                      if (isCancelled) return;
-                     
-                     // Update cache in main state so we don't re-process later
                      itemSize = size;
-                     // Important: Update state but don't break loop logic.
-                     // We use a functional update to ensure we don't lose other updates.
-                     // Note: This triggers a re-render which might re-trigger effect, hence itemsHash dependency.
-                     // To avoid infinite loop, we only update if buffer is missing.
                      onUpdateItems(prev => prev.map(p => p.id === item.id ? { ...p, processedBuffer: buffer, processedSize: size, compressionLevelUsed: settings.compressionLevel } : p));
-                 } catch (e) {
-                     console.error("Processing failed", item.name);
-                     itemSize = item.size; 
-                 }
+                 } catch (e) { console.error("Processing failed", item.name); itemSize = item.size; }
              }
-
-             // B. ADD TO BATCH CANDIDATE
              currentBatch.push(item);
-             
-             // C. UPDATE ESTIMATE
              estimatedAccumulator += (itemSize || 0) + EST_OVERHEAD_PER_PAGE;
-
-             // D. DECISION LOGIC
-             // If we are well below limit, just continue (Fast path)
              if (estimatedAccumulator < VERIFY_THRESHOLD_BYTES) {
-                 nextCursor++;
-                 // Yield to UI
-                 await new Promise(r => setTimeout(r, 0));
-                 continue;
+                 nextCursor++; await new Promise(r => setTimeout(r, 0)); continue;
              }
-
-             // If we are in the "Danger Zone" or overshoot, we MUST verify precisely.
              setOptimizingStatus(`Del ${currentChunkId}: Verifierar exakt storlek...`);
-             
              try {
-                 // Generate actual PDF in memory to verify size
                  const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel);
                  const realSize = pdfBytes.byteLength;
-
                  if (realSize < limitBytes) {
-                     // FITS! Keep going.
-                     finalBatchSizeBytes = realSize;
-                     nextCursor++;
+                     finalBatchSizeBytes = realSize; nextCursor++;
                  } else {
-                     // OVERFLOW! 
-                     // This item made it explode.
-                     // Remove it from batch, and finalize this chunk.
                      currentBatch.pop(); 
-                     
-                     // Note: If batch is empty (single file > limit), we MUST keep it anyway or we get stuck.
-                     if (currentBatch.length === 0) {
-                         currentBatch.push(item);
-                         finalBatchSizeBytes = realSize; // Accept oversized
-                         nextCursor++; 
-                     }
-                     
-                     chunkIsFull = true;
-                     break; // Break the while loop to finalize chunk
+                     if (currentBatch.length === 0) { currentBatch.push(item); finalBatchSizeBytes = realSize; nextCursor++; }
+                     chunkIsFull = true; break;
                  }
-             } catch (e) {
-                 console.error("Verification failed", e);
-                 // Fallback: stop here safely
-                 chunkIsFull = true;
-                 break;
-             }
+             } catch (e) { chunkIsFull = true; break; }
         }
-
-        // If loop finished because we ran out of items, calculate final size if needed
         if (!chunkIsFull && currentBatch.length > 0 && finalBatchSizeBytes === 0) {
-             try {
-                const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel);
-                finalBatchSizeBytes = pdfBytes.byteLength;
-             } catch (e) {}
+             try { const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel); finalBatchSizeBytes = pdfBytes.byteLength; } catch (e) {}
         }
-
         if (!isCancelled && currentBatch.length > 0) {
-            setChunks(prev => [
-                ...prev, 
-                {
-                    id: currentChunkId,
-                    items: currentBatch,
-                    sizeBytes: finalBatchSizeBytes || estimatedAccumulator, // Fallback to est if calc failed
-                    isOptimized: true,
-                    isUploading: false,
-                    isSynced: false,
-                    title: `${bookTitle} (Del ${currentChunkId})`
-                }
-            ]);
-            setOptimizationCursor(nextCursor);
-            setOptimizingStatus('');
+            setChunks(prev => [...prev, { id: currentChunkId, items: currentBatch, sizeBytes: finalBatchSizeBytes || estimatedAccumulator, isOptimized: true, isUploading: false, isSynced: false, title: `${bookTitle} (Del ${currentChunkId})` }]);
+            setOptimizationCursor(nextCursor); setOptimizingStatus('');
         }
     };
-
-    // Trigger loop with a small delay
     const timer = setTimeout(processNextStep, 100);
     return () => { isCancelled = true; clearTimeout(timer); };
-
   }, [itemsHash, optimizationCursor, chunks.length, settings.compressionLevel, settings.maxChunkSizeMB]);
-
 
   // --- UPLOAD / SYNC LOGIC (Simple Linear Sync) ---
   useEffect(() => {
       if (!currentBook.driveFolderId) return;
-
       const sync = async () => {
-          // Find first chunk that is optimized but not synced/uploading
           const chunkToSync = chunks.find(c => c.isOptimized && !c.isSynced && !c.isUploading);
           if (!chunkToSync) return;
-
-          // Start syncing
           setChunks(prev => prev.map(c => c.id === chunkToSync.id ? { ...c, isUploading: true } : c));
-
           try {
-              // Note: We regenerate here to ensure consistency, or we could have stored the blob from verification
-              // but storing blobs in state is heavy. Generating again is safer for memory.
               const pdfBytes = await generateCombinedPDF(accessToken, chunkToSync.items, chunkToSync.title, settings.compressionLevel);
               const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
-              
-              // We just overwrite/upload. A smarter sync would check if file exists with same hash.
               await uploadToDrive(accessToken, currentBook.driveFolderId!, `${chunkToSync.title}.pdf`, blob);
-              
               setChunks(prev => prev.map(c => c.id === chunkToSync.id ? { ...c, isUploading: false, isSynced: true } : c));
           } catch (e) {
-              console.error("Upload failed", e);
-              // Reset uploading so it retries later (or handle error state)
               setChunks(prev => prev.map(c => c.id === chunkToSync.id ? { ...c, isUploading: false } : c));
           }
       };
-
-      const t = setTimeout(sync, 2000); // Wait a bit before starting sync to let optimization stabilize
-      return () => clearTimeout(t);
+      const t = setTimeout(sync, 2000); return () => clearTimeout(t);
   }, [chunks, currentBook.driveFolderId, accessToken]);
 
 
@@ -283,7 +212,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       }
   };
 
-  // --- HELPER FOR UI ---
   const getChunkForItem = (itemId: string) => chunks.find(c => c.items.some(i => i.id === itemId));
 
   // --- HANDLERS ---
@@ -389,9 +317,12 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
              {!isCompact ? (
                  <>
                     <h2 className="text-xl font-serif font-bold text-slate-900 leading-tight">Filer till FamilySearch</h2>
-                    <p className="text-[10px] text-slate-500 font-medium mt-1">
-                        {optimizingStatus ? <span className="text-amber-600 animate-pulse"><i className="fas fa-circle-notch fa-spin mr-1"></i> {optimizingStatus}</span> : 'Klar att spara och dela'}
-                    </p>
+                    <div className="flex justify-between items-center mt-1">
+                        <p className="text-[10px] text-slate-500 font-medium">
+                            {optimizingStatus ? <span className="text-amber-600 animate-pulse"><i className="fas fa-circle-notch fa-spin mr-1"></i> {optimizingStatus}</span> : 'Klar att spara och dela'}
+                        </p>
+                        {autoSaveStatus && <span className={`text-[10px] font-bold ${autoSaveStatus === 'Kunde inte spara' ? 'text-red-500' : 'text-slate-400'}`}>{autoSaveStatus}</span>}
+                    </div>
                     <div className="text-[10px] text-slate-400 mt-2 truncate bg-white p-2 rounded border border-slate-200" title={`Min Enhet / Dela din historia / ${bookTitle}`}>
                          <i className="fab fa-google-drive mr-1 text-slate-500"></i>
                          Sökväg: <span className="font-mono text-slate-600">Dela din historia / {bookTitle}</span>
