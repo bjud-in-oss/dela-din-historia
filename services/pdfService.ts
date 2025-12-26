@@ -266,10 +266,11 @@ export const extractHighQualityImage = async (blob: Blob, pageIndex: number): Pr
     });
 };
 
-export const generatePageThumbnail = async (blob: Blob, pageIndex: number = 0): Promise<string> => {
+export const generatePageThumbnail = async (blob: Blob, pageIndex: number = 0, scale: number = 0.5): Promise<string> => {
     const pdf = await getPdfDocument(blob);
     const canvas = document.createElement('canvas');
-    await renderPdfPageToCanvas(pdf, pageIndex + 1, canvas, 0.3); // Low scale for thumbnail
+    // Scale 0.5 gives decent readability for text without being too heavy (~300px width for A4)
+    await renderPdfPageToCanvas(pdf, pageIndex + 1, canvas, scale); 
     return new Promise((resolve) => {
         canvas.toBlob((b) => b ? resolve(URL.createObjectURL(b)) : resolve(''), 'image/jpeg', 0.7);
     });

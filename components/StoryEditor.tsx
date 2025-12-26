@@ -48,10 +48,10 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onClick={onClick}
-      className={`relative group aspect-[210/297] rounded-sm shadow-sm transition-all bg-white border cursor-pointer overflow-hidden
+      className={`relative group aspect-[210/297] rounded-sm shadow-sm transition-all cursor-pointer overflow-hidden
         ${isSelected ? 'ring-2 ring-indigo-500 z-10' : 'hover:shadow-md hover:scale-[1.02]'}
-        ${chunkInfo ? 'border-l-4 ' + chunkInfo.colorClass.replace('bg-', 'border-') : 'border-slate-200'}
-        ${isHeader ? 'bg-slate-800' : ''}
+        ${chunkInfo ? 'border-l-4 ' + chunkInfo.colorClass.replace('bg-', 'border-') : 'border border-slate-200'}
+        ${isHeader ? 'bg-slate-800' : 'bg-white'}
       `}
     >
         {isHeader ? (
@@ -61,7 +61,8 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
              </div>
         ) : (
              <>
-                 <div className="w-full h-2/3 bg-slate-100 overflow-hidden relative">
+                 {/* Full Image Container */}
+                 <div className="absolute inset-0 bg-slate-100">
                      {item.thumbnail || item.blobUrl ? (
                          <img src={item.thumbnail || item.blobUrl} className="w-full h-full object-cover" alt={item.name} />
                      ) : (
@@ -69,32 +70,36 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
                              <i className={`fas ${item.type === FileType.PDF ? 'fa-file-pdf' : 'fa-file-image'} text-4xl`}></i>
                          </div>
                      )}
-                     {chunkInfo && (
-                         <div className={`absolute top-0 right-0 px-2 py-1 text-[9px] font-bold text-white ${chunkInfo.colorClass}`}>
-                             Del {chunkInfo.chunkIndex}
-                         </div>
-                     )}
                  </div>
-                 <div className="p-3 h-1/3 bg-white flex flex-col justify-between">
-                     <div>
-                         <h4 className="text-xs font-bold text-slate-800 line-clamp-2 leading-tight">{item.name}</h4>
-                         {item.description && <p className="text-[10px] text-slate-500 mt-1 line-clamp-2 italic">{item.description}</p>}
+
+                 {/* Gradient Overlay for Text Visibility */}
+                 <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/70 to-transparent pointer-events-none"></div>
+
+                 {/* Top Right: Chunk Indicator */}
+                 {chunkInfo && (
+                     <div className={`absolute top-0 right-0 px-2 py-1 text-[9px] font-bold text-white ${chunkInfo.colorClass} z-20`}>
+                         Del {chunkInfo.chunkIndex}
                      </div>
-                     <div className="flex justify-between items-center mt-2">
-                        <span className="text-[9px] text-slate-400 font-mono">{item.size > 0 ? (item.size/1024/1024).toFixed(1) + ' MB' : ''}</span>
-                        <div className="flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="w-6 h-6 rounded-full bg-slate-100 hover:bg-indigo-100 text-slate-500 hover:text-indigo-600 flex items-center justify-center"><i className="fas fa-pen text-[10px]"></i></button>
-                            {item.type === FileType.PDF && onSplit && (
-                                <button onClick={(e) => { e.stopPropagation(); onSplit(); }} className="w-6 h-6 rounded-full bg-slate-100 hover:bg-indigo-100 text-slate-500 hover:text-indigo-600 flex items-center justify-center" title="Dela upp sidor"><i className="fas fa-cut text-[10px]"></i></button>
-                            )}
-                        </div>
-                     </div>
+                 )}
+
+                 {/* Bottom Left: Filename */}
+                 <div className="absolute bottom-2 left-2 right-14 z-20">
+                     <h4 className="text-[10px] font-bold text-white line-clamp-2 leading-tight drop-shadow-md">{item.name}</h4>
+                 </div>
+
+                 {/* Bottom Right: Actions */}
+                 <div className="absolute bottom-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                    <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="w-6 h-6 rounded-full bg-white/90 hover:bg-white text-slate-700 hover:text-indigo-600 flex items-center justify-center shadow-sm backdrop-blur-sm"><i className="fas fa-pen text-[10px]"></i></button>
+                    {item.type === FileType.PDF && onSplit && (
+                        <button onClick={(e) => { e.stopPropagation(); onSplit(); }} className="w-6 h-6 rounded-full bg-white/90 hover:bg-white text-slate-700 hover:text-indigo-600 flex items-center justify-center shadow-sm backdrop-blur-sm" title="Dela upp sidor"><i className="fas fa-cut text-[10px]"></i></button>
+                    )}
                  </div>
              </>
         )}
         
+        {/* Selection Checkmark */}
         {isSelected && (
-            <div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center shadow-lg text-white">
+            <div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center shadow-lg text-white z-30">
                 <i className="fas fa-check text-xs"></i>
             </div>
         )}
@@ -182,6 +187,7 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
     const mainCanvasRef = useRef<HTMLCanvasElement>(null);
     const [isLoadingPreview, setIsLoadingPreview] = useState(true);
     const [isSavingImage, setIsSavingImage] = useState(false);
+    const [isSavingThumbnail, setIsSavingThumbnail] = useState(false);
 
     // Initial Load
     useEffect(() => {
@@ -286,6 +292,23 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
         }
     };
 
+    const handleSaveAndClose = async () => {
+        setIsSavingThumbnail(true);
+        try {
+            if (previewBlob) {
+               // Generate updated thumbnail with text visible
+               // Scale 0.5 creates a high enough quality thumbnail to read text but small enough for grid
+               const newThumb = await generatePageThumbnail(previewBlob, 0, 0.5);
+               onUpdate({ thumbnail: newThumb });
+            }
+        } catch(e) { 
+            console.warn("Kunde inte uppdatera miniatyrbild", e); 
+        } finally {
+            setIsSavingThumbnail(false);
+            onClose();
+        }
+    };
+
     const getActiveConfig = () => { const meta = getCurrentMeta(); const lines = activeSection === 'header' ? meta.headerLines : meta.footerLines; const line = lines.find(l => l.id === focusedLineId); return line?.config || (activeSection === 'header' ? DEFAULT_TEXT_CONFIG : DEFAULT_FOOTER_CONFIG); };
     const updateActiveConfig = (key: keyof TextConfig, value: any) => { const meta = getCurrentMeta(); const isHeader = activeSection === 'header'; const lines = isHeader ? meta.headerLines : meta.footerLines; if (focusedLineId) { const newLines = lines.map(l => l.id === focusedLineId ? { ...l, config: { ...l.config, [key]: value } } : l); updateCurrentMeta(isHeader ? { headerLines: newLines } : { footerLines: newLines }); } else { const newLines = lines.map(l => ({ ...l, config: { ...l.config, [key]: value } })); updateCurrentMeta(isHeader ? { headerLines: newLines } : { footerLines: newLines }); } };
     const currentConfig = getActiveConfig();
@@ -306,11 +329,14 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
                     <button onClick={() => setActivePageIndex(Math.min(totalPages - 1, activePageIndex + 1))} disabled={activePageIndex === totalPages - 1} className="w-8 h-8 rounded hover:bg-slate-700 disabled:opacity-30"><i className="fas fa-chevron-right"></i></button>
                 </div>
                 <div className="flex items-center space-x-3">
-                    <button onClick={handleCopyPageToPng} disabled={isSavingImage} className="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center space-x-2 shadow-lg disabled:opacity-50">
+                    <button onClick={handleCopyPageToPng} disabled={isSavingImage || isSavingThumbnail} className="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center space-x-2 shadow-lg disabled:opacity-50">
                         {isSavingImage ? <i className="fas fa-circle-notch fa-spin"></i> : <i className="fas fa-save"></i>}
                         <span>{isSavingImage ? 'Sparar...' : 'Spara bild'}</span>
                     </button>
-                    <button onClick={onClose} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-1.5 rounded text-xs font-bold transition-colors">Klar</button>
+                    <button onClick={handleSaveAndClose} disabled={isSavingThumbnail} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-1.5 rounded text-xs font-bold transition-colors disabled:opacity-50 flex items-center gap-2">
+                        {isSavingThumbnail && <i className="fas fa-circle-notch fa-spin"></i>}
+                        <span>{isSavingThumbnail ? 'Sparar...' : 'Klar'}</span>
+                    </button>
                 </div>
             </div>
             
