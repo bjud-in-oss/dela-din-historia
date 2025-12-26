@@ -19,6 +19,15 @@ const createBlob = (data: ArrayBuffer | Uint8Array, type: string): Blob => {
     return new Blob([data as any], { type });
 };
 
+const hexToRgb = (hex: string) => {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? {
+        r: parseInt(result[1], 16) / 255,
+        g: parseInt(result[2], 16) / 255,
+        b: parseInt(result[3], 16) / 255
+    } : { r: 0, g: 0, b: 0 };
+};
+
 const compressImageBuffer = async (buffer: ArrayBuffer, level: CompressionLevel): Promise<ArrayBuffer> => {
     let quality = 0.9;
     let maxWidth = 2500;
@@ -229,11 +238,11 @@ export const calculateChunks = (
 
 // UPDATED DEFAULTS
 export const DEFAULT_TEXT_CONFIG: TextConfig = {
-  fontSize: 24, alignment: 'center', isBold: true, isItalic: false, verticalPosition: 'center'
+  fontSize: 24, alignment: 'center', isBold: true, isItalic: false, verticalPosition: 'center', color: '#000000', backgroundColor: undefined, backgroundOpacity: 0, padding: 0
 };
 
 export const DEFAULT_FOOTER_CONFIG: TextConfig = {
-  fontSize: 12, alignment: 'left', isBold: false, isItalic: false, verticalPosition: 'top'
+  fontSize: 12, alignment: 'left', isBold: false, isItalic: false, verticalPosition: 'top', color: '#000000', backgroundColor: undefined, backgroundOpacity: 0, padding: 0
 };
 
 // --- PDF RENDERING ---
@@ -330,6 +339,18 @@ const measureTextHeight = (lines: RichTextLine[]) => {
     return h;
 };
 
+const getFooterHeight = (meta: PageMetadata | null) => {
+    if (!meta || !meta.footerLines || meta.footerLines.length === 0) return 0;
+    
+    // Allow custom box height from the first footer line's config if set
+    if (meta.footerLines[0].config.boxHeight) {
+        return meta.footerLines[0].config.boxHeight;
+    }
+    
+    // Default dynamic height
+    return measureTextHeight(meta.footerLines) + 100;
+};
+
 const drawRichLines = (page: PDFPage, lines: RichTextLine[], fonts: any, region: 'top' | 'bottom', footerOffset: number = 0) => {
     const { width, height } = page.getSize();
     const margin = 50;
@@ -353,17 +374,8 @@ const drawRichLines = (page: PDFPage, lines: RichTextLine[], fonts: any, region:
         }
     } else {
         // Footer logic (Text BELOW page)
-        // Draw in the extended whitespace
-        // footerOffset is the extra height added. 
-        // We draw starting from top of footer area downwards.
         startY = footerOffset - margin; 
     }
-
-    // Background for text on top of image
-    if (region === 'top' && lines[0]?.config.verticalPosition !== 'center') {
-        const bgPadding = 10;
-        // Optional BG for top text
-    } 
 
     let currentY = startY;
     lines.forEach(line => {
@@ -373,13 +385,42 @@ const drawRichLines = (page: PDFPage, lines: RichTextLine[], fonts: any, region:
         else if (line.config.isBold) font = fonts.bold;
         else if (line.config.isItalic) font = fonts.italic;
 
-        const textWidth = font.widthOfTextAtSize(line.text, line.config.fontSize);
+        const textSize = line.config.fontSize;
+        const textWidth = font.widthOfTextAtSize(line.text, textSize);
+        const padding = line.config.padding || 0;
+        
+        // Calculate X position
         let x = margin;
         if (line.config.alignment === 'center') x = (width - textWidth) / 2;
         else if (line.config.alignment === 'right') x = width - margin - textWidth;
 
-        page.drawText(line.text, { x, y: currentY - line.config.fontSize, size: line.config.fontSize, font, color: rgb(0,0,0) });
-        currentY -= (line.config.fontSize * 1.3);
+        // Draw Background if configured
+        if (line.config.backgroundColor && line.config.backgroundOpacity && line.config.backgroundOpacity > 0) {
+            const bgRgb = hexToRgb(line.config.backgroundColor);
+            const bgHeight = textSize * 1.3; // Line height approximation
+            
+            // Draw rect centered on text
+            page.drawRectangle({
+                x: x - padding,
+                y: currentY - textSize - (padding/2), // Adjust for baseline
+                width: textWidth + (padding * 2),
+                height: bgHeight + padding,
+                color: rgb(bgRgb.r, bgRgb.g, bgRgb.b),
+                opacity: line.config.backgroundOpacity
+            });
+        }
+
+        // Draw Text
+        const textColor = line.config.color ? hexToRgb(line.config.color) : { r: 0, g: 0, b: 0 };
+        page.drawText(line.text, { 
+            x, 
+            y: currentY - textSize, 
+            size: textSize, 
+            font, 
+            color: rgb(textColor.r, textColor.g, textColor.b) 
+        });
+        
+        currentY -= (textSize * 1.3);
     });
 };
 
@@ -410,7 +451,7 @@ export const createPreviewWithOverlay = async (fileBlob: Blob, fileType: FileTyp
             
             // Check for footer text to extend page
             const meta = pageMeta[0];
-            const footerHeight = meta?.footerLines ? measureTextHeight(meta.footerLines) + 100 : 0;
+            const footerHeight = getFooterHeight(meta);
             
             const page = pdfDoc.addPage([A4_WIDTH, scaledHeight + footerHeight]);
             page.drawImage(image, { x: 0, y: footerHeight, width: A4_WIDTH, height: scaledHeight });
@@ -421,7 +462,7 @@ export const createPreviewWithOverlay = async (fileBlob: Blob, fileType: FileTyp
             
             embeddedPages.forEach((ep, idx) => {
                 const meta = pageMeta[idx];
-                const footerHeight = meta?.footerLines ? measureTextHeight(meta.footerLines) + 100 : 0;
+                const footerHeight = getFooterHeight(meta);
 
                 const pWidth = ep.width;
                 const pHeight = ep.height;
@@ -441,7 +482,7 @@ export const createPreviewWithOverlay = async (fileBlob: Blob, fileType: FileTyp
     pages.forEach((page, index) => {
         const meta = pageMeta[index];
         if (meta) {
-            const footerHeight = meta.footerLines ? measureTextHeight(meta.footerLines) + 100 : 0;
+            const footerHeight = getFooterHeight(meta);
             
             if (meta.hideObject) {
                  const { width, height } = page.getSize();
@@ -471,8 +512,6 @@ export const mergeFilesToPdf = async (files: DriveFile[], accessToken: string, c
             const result = await processFileForCache(item, accessToken, compression);
             buffer = result.buffer;
             
-            // Check meta for this file to see if we need footer space (just checking 1st page meta for single items, looping for pdfs)
-            
             if (item.type === FileType.IMAGE) {
                 let image;
                 try { image = await mergedPdf.embedJpg(buffer); } catch { 
@@ -481,11 +520,9 @@ export const mergeFilesToPdf = async (files: DriveFile[], accessToken: string, c
                 }
                 
                 const meta = item.pageMeta ? item.pageMeta[0] : null;
-                // Also check legacy
-                const hasFooter = meta?.footerLines && meta.footerLines.length > 0 || (item.description && !item.pageMeta);
-                const footerHeight = hasFooter ? 
-                    (meta ? measureTextHeight(meta.footerLines) : 50) + 100 
-                    : 0;
+                // Strict check: Only add footer height if lines actually exist
+                const hasFooter = meta?.footerLines && meta.footerLines.length > 0;
+                const footerHeight = hasFooter ? getFooterHeight(meta) : 0;
 
                 const scale = A4_WIDTH / image.width;
                 const scaledHeight = image.height * scale;
@@ -508,7 +545,8 @@ export const mergeFilesToPdf = async (files: DriveFile[], accessToken: string, c
                  
                  embeddedPages.forEach((ep, idx) => {
                     const meta = item.pageMeta ? item.pageMeta[idx] : null;
-                    const footerHeight = meta?.footerLines && meta.footerLines.length > 0 ? measureTextHeight(meta.footerLines) + 100 : 0;
+                    const hasFooter = meta?.footerLines && meta.footerLines.length > 0;
+                    const footerHeight = hasFooter ? getFooterHeight(meta) : 0;
 
                     const scale = A4_WIDTH / ep.width;
                     const scaledHeight = ep.height * scale;
@@ -540,6 +578,5 @@ export const generateCombinedPDF = async (
 ): Promise<Uint8Array> => {
   const contentBlob = await mergeFilesToPdf(items, accessToken, compression);
   const contentBuffer = await contentBlob.arrayBuffer();
-  // Simply return the merged PDF buffer
   return new Uint8Array(contentBuffer);
 };

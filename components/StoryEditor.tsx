@@ -403,11 +403,76 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
                                  <button onClick={() => updateActiveConfig('verticalPosition', 'bottom')} className={`w-7 h-7 rounded text-xs ${currentConfig.verticalPosition === 'bottom' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-arrow-down"></i></button>
                              </div>
                          )}
+                         {/* Quick Transparent White Background Button */}
+                         <button 
+                            onClick={() => {
+                                updateActiveConfig('backgroundColor', '#ffffff');
+                                updateActiveConfig('backgroundOpacity', 0.8);
+                                updateActiveConfig('padding', 10);
+                            }}
+                            className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-[10px] font-bold text-slate-600 flex items-center gap-1"
+                            title="Lägg till vit bakgrund"
+                         >
+                             <div className="w-3 h-3 bg-white border border-slate-300"></div> +Vit
+                         </button>
                      </div>
-                     <div className="px-4 py-2 border-b border-slate-100">
+                     <div className="px-4 py-3 border-b border-slate-100">
                          <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-1"><span>Textstorlek</span><span>{currentConfig.fontSize}px</span></div>
                          <input type="range" min="8" max="72" value={currentConfig.fontSize} onChange={(e) => updateActiveConfig('fontSize', parseInt(e.target.value))} className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
                      </div>
+
+                     {/* STYLE & COLOR SECTION */}
+                     <div className="px-4 py-3 border-b border-slate-100 space-y-3">
+                         <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Stil & Färg</h4>
+                         
+                         <div className="grid grid-cols-2 gap-2">
+                             <div>
+                                 <label className="text-[9px] font-bold text-slate-500 block mb-1">Textfärg</label>
+                                 <div className="flex items-center gap-2">
+                                     <input type="color" value={currentConfig.color || '#000000'} onChange={(e) => updateActiveConfig('color', e.target.value)} className="w-6 h-6 rounded cursor-pointer border border-slate-200 p-0" />
+                                     <span className="text-[10px] font-mono text-slate-400">{currentConfig.color || '#000'}</span>
+                                 </div>
+                             </div>
+                             <div>
+                                 <label className="text-[9px] font-bold text-slate-500 block mb-1">Bakgrundsfärg</label>
+                                 <div className="flex items-center gap-2">
+                                     <input type="color" value={currentConfig.backgroundColor || '#ffffff'} onChange={(e) => updateActiveConfig('backgroundColor', e.target.value)} className="w-6 h-6 rounded cursor-pointer border border-slate-200 p-0" />
+                                     {/* Clear BG Button */}
+                                     <button onClick={() => updateActiveConfig('backgroundOpacity', 0)} className="text-[9px] text-red-400 hover:text-red-600 font-bold px-1" title="Ta bort bakgrund">X</button>
+                                 </div>
+                             </div>
+                         </div>
+
+                         <div>
+                             <div className="flex justify-between text-[9px] font-bold text-slate-500 mb-1"><span>Opacitet (Bakgrund)</span><span>{Math.round((currentConfig.backgroundOpacity || 0) * 100)}%</span></div>
+                             <input type="range" min="0" max="1" step="0.1" value={currentConfig.backgroundOpacity || 0} onChange={(e) => updateActiveConfig('backgroundOpacity', parseFloat(e.target.value))} className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                         </div>
+
+                         <div>
+                             <div className="flex justify-between text-[9px] font-bold text-slate-500 mb-1"><span>Luft (Padding)</span><span>{currentConfig.padding || 0}px</span></div>
+                             <input type="range" min="0" max="50" step="1" value={currentConfig.padding || 0} onChange={(e) => updateActiveConfig('padding', parseInt(e.target.value))} className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                         </div>
+                     </div>
+
+                     {/* Footer Height Control (Only visible when Footer is active) */}
+                     {activeSection === 'footer' && (
+                         <div className="px-4 py-3 border-b border-slate-100 bg-amber-50/50">
+                             <div className="flex justify-between text-[10px] font-bold text-amber-700 mb-1"><span>Fälthöjd (under bild)</span><span>{currentConfig.boxHeight || 'Auto'}</span></div>
+                             <input 
+                                type="range" 
+                                min="50" 
+                                max="800" 
+                                step="10" 
+                                value={currentConfig.boxHeight || 150} 
+                                onChange={(e) => updateActiveConfig('boxHeight', parseInt(e.target.value))} 
+                                className="w-full h-1 bg-amber-200 rounded-lg appearance-none cursor-pointer accent-amber-600" 
+                             />
+                             <div className="text-right mt-1">
+                                 <button onClick={() => updateActiveConfig('boxHeight', undefined)} className="text-[9px] text-amber-500 hover:text-amber-700 underline">Återställ till auto</button>
+                             </div>
+                         </div>
+                     )}
+
                      <div className="flex-1 overflow-y-auto p-4 space-y-6">
                         <div className={`rounded-lg border p-3 cursor-pointer transition-all ${activeSection === 'header' ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-200' : 'bg-white border-slate-200 hover:border-slate-300'}`} onClick={() => setActiveSection('header')}>
                             <label className="text-[10px] font-black uppercase text-indigo-900 mb-2 block">Text PÅ sidan</label>

@@ -15,7 +15,11 @@ export interface TextConfig {
   isBold: boolean;
   isItalic: boolean;
   verticalPosition: 'top' | 'center' | 'bottom';
-  color?: string;
+  color?: string; // Hex color for text
+  backgroundColor?: string; // Hex color for background box
+  backgroundOpacity?: number; // 0.0 to 1.0
+  padding?: number; // Padding around text in the box
+  boxHeight?: number; // Specific height for footer area (only relevant for footer)
 }
 
 export interface RichTextLine {
