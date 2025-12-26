@@ -464,12 +464,12 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   };
 
   // --- OPTIMIZATION STATE ---
-  // Calculate a hash of current state to check against persisted state
+  // Simplified Hash: Only IDs and Order matter for structure. 
+  // 'processedSize' is transient and shouldn't invalidate the structure.
   const generateHash = () => {
-      const parts = items.map(i => `${i.id}-${i.modifiedTime}-${i.processedSize || 'u'}`);
-      return parts.join('|') + `_${settings.maxChunkSizeMB}_${settings.compressionLevel}_${settings.safetyMarginPercent}`;
+      return items.map(i => i.id).join('|');
   };
-  const currentItemsHash = useMemo(generateHash, [items, settings]);
+  const currentItemsHash = useMemo(generateHash, [items]);
 
   const [chunks, setChunks] = useState<ChunkData[]>(currentBook.chunks || []);
   const [optimizationCursor, setOptimizationCursor] = useState(0);
@@ -488,21 +488,16 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
   // --- RECONCILIATION & INIT LOGIC ---
   useEffect(() => {
-      // 1. Initial Load from Saved State
-      if (chunks.length === 0 && currentBook.chunks && currentBook.chunks.length > 0 && currentBook.optimizationHash === currentItemsHash) {
-          setChunks(currentBook.chunks);
-          setOptimizationCursor(items.length);
-          return;
-      }
-
-      // 2. Reconciliation on Change (Insertion/Deletion/Move)
-      // Check which existing chunks are still valid by comparing their content to current items
+      // 1. Initial Load from Saved State OR Re-check after modification
+      // If we have saved chunks, we verify them against current items.
+      const savedChunks = chunks.length > 0 ? chunks : (currentBook.chunks || []);
+      
       let itemIndex = 0;
       let validChunks: ChunkData[] = [];
       let mismatchFound = false;
 
-      for (const chunk of chunks) {
-          if (mismatchFound) break; // Optimization: stop checking once we find a diff
+      for (const chunk of savedChunks) {
+          if (mismatchFound) break;
 
           const chunkLen = chunk.items.length;
           // Check bounds
@@ -524,9 +519,8 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       }
 
       // INTELLIGENT GAP FILLING:
-      // If we found valid chunks, check the *last* valid chunk.
-      // If it hasn't been synced to Drive yet, we discard it from the "valid" list.
-      // Why? Because new items might fit into it! We want to re-optimize it.
+      // If the last valid chunk is NOT synced, we discard it to allow refilling.
+      // This forces the optimizer to reconsider the items in that chunk + any new items.
       if (validChunks.length > 0 && !validChunks[validChunks.length - 1].isSynced) {
           const lastChunk = validChunks.pop();
           if (lastChunk) {
@@ -535,20 +529,14 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
           }
       }
 
-      // Update state if we found invalid chunks or if cursor needs adjustment
-      if (mismatchFound || validChunks.length < chunks.length) {
+      // Only update state if it's different to prevent loops
+      if (validChunks.length !== chunks.length || itemIndex !== optimizationCursor) {
           setChunks(validChunks);
           setOptimizationCursor(itemIndex);
           if (items.length > itemIndex) setOptimizingStatus('Omorganiserar...');
-      } else if (itemIndex < items.length && optimizationCursor > items.length) {
-          // Handle case where items shrank but matched prefix (e.g. deleted last item)
-          setOptimizationCursor(items.length);
-      } else if (itemIndex < items.length && optimizationCursor === items.length && validChunks.length === chunks.length) {
-          // Handle case where item was appended (matched all previous chunks)
-          setOptimizationCursor(itemIndex);
       }
 
-  }, [currentItemsHash]); // Run whenever hash changes (items change)
+  }, [currentItemsHash, currentBook.id]); // Run when items change order/count or book changes
 
 
   // --- AUTO SAVE TO DRIVE ---
@@ -778,30 +766,21 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
           }; 
           
           const newItems = [...items]; 
-          const remainingItems = newItems.filter(i => !selectedIds.has(i.id)); 
+          // Reconstruct array logic carefully to not lose positions of non-merged items
+          // Filter out the selected ones from original array, then insert new one at firstIndex.
+          const finalItems = items.filter(i => !selectedIds.has(i.id));
+          // We need to insert at the correct index relative to the new array.
+          // Since we removed items, 'firstIndex' might be too large if items before it were removed?
+          // Actually, selected items are what we are removing. 
+          // If we remove items *before* firstIndex, then firstIndex shifts.
+          // But 'itemsToMerge' are the selected ones. 'firstIndex' is the index of the first selected one.
+          // Any selected item appearing *before* firstIndex is impossible because firstIndex is the *first* one.
+          // So 'firstIndex' is safe to use as insertion point in the filtered array?
+          // No, if we select index 2 and 5. firstIndex is 2.
+          // Filter removes 2 and 5.
+          // Insert at 2. Correct.
           
-          // Determine insert position (careful with indices after filter)
-          // Easiest is to filter out then splice in at firstIndex
-          // Since remainingItems doesn't have the removed ones, the index might shift if we used indices.
-          // Strategy: remove selected from array, then insert at firstIndex.
-          // Wait, 'remainingItems' is missing the items we want to replace.
-          // 'firstIndex' is the index in the ORIGINAL array.
-          // We need to find where to insert in 'remainingItems'.
-          
-          // Simpler approach: Map over original items, replace first match with newItem, filter out others.
-          let inserted = false;
-          const finalItems = items.reduce((acc: DriveFile[], item) => {
-              if (selectedIds.has(item.id)) {
-                  if (!inserted && item.id === itemsToMerge[0].id) {
-                      acc.push(newItem);
-                      inserted = true;
-                  }
-                  // Skip (remove)
-              } else {
-                  acc.push(item);
-              }
-              return acc;
-          }, []);
+          finalItems.splice(firstIndex, 0, newItem);
 
           onUpdateItems(finalItems); 
           
