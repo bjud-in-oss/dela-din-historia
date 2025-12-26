@@ -70,6 +70,16 @@ export interface AppSettings {
   safetyMarginPercent: number;
 }
 
+export interface ChunkData {
+    id: number;
+    items: DriveFile[];
+    sizeBytes: number;
+    isOptimized: boolean; 
+    isUploading: boolean;
+    isSynced: boolean;
+    title: string;
+}
+
 export interface MemoryBook {
   id: string;
   title: string;
@@ -78,4 +88,6 @@ export interface MemoryBook {
   coverImageId?: string;
   driveFolderId?: string; // ID till mappen i Google Drive där boken bor
   settings?: AppSettings; // Bok-specifika inställningar
+  chunks?: ChunkData[]; // Persisted chunks
+  optimizationHash?: string; // Hash to verify chunks validity
 }

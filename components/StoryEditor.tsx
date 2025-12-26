@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { DriveFile, FileType, TextConfig, RichTextLine, PageMetadata, AppSettings, MemoryBook, CompressionLevel } from '../types';
+import { DriveFile, FileType, TextConfig, RichTextLine, PageMetadata, AppSettings, MemoryBook, CompressionLevel, ChunkData } from '../types';
 import { generateCombinedPDF, splitPdfIntoPages, mergeFilesToPdf, createPreviewWithOverlay, getPdfPageCount, DEFAULT_TEXT_CONFIG, DEFAULT_FOOTER_CONFIG, getPdfDocument, renderPdfPageToCanvas, extractHighQualityImage, processFileForCache, generatePageThumbnail } from '../services/pdfService';
 import { uploadToDrive, saveProjectState } from '../services/driveService';
 import FamilySearchExport from './FamilySearchExport';
@@ -27,16 +27,6 @@ const CHUNK_THEMES = [
     { border: 'border-rose-500', bg: 'bg-rose-500', text: 'text-rose-700', lightBg: 'bg-rose-50' },
     { border: 'border-cyan-500', bg: 'bg-cyan-500', text: 'text-cyan-700', lightBg: 'bg-cyan-50' }
 ];
-
-interface ChunkData {
-    id: number;
-    items: DriveFile[];
-    sizeBytes: number;
-    isOptimized: boolean; 
-    isUploading: boolean;
-    isSynced: boolean;
-    title: string;
-}
 
 export interface ExportedFile {
     id: string;
@@ -107,6 +97,27 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       setExportedFiles(prev => [newFile, ...prev]);
   };
 
+  // --- OPTIMIZATION STATE ---
+  // Calculate a hash of current state to check against persisted state
+  const generateHash = () => {
+      const parts = items.map(i => `${i.id}-${i.modifiedTime}-${i.processedSize || 'u'}`);
+      return parts.join('|') + `_${settings.maxChunkSizeMB}_${settings.compressionLevel}_${settings.safetyMarginPercent}`;
+  };
+  const currentItemsHash = useMemo(generateHash, [items, settings]);
+
+  // Init state with saved chunks if hash matches
+  const [chunks, setChunks] = useState<ChunkData[]>(currentBook.chunks || []);
+  const [optimizationCursor, setOptimizationCursor] = useState(
+      (currentBook.optimizationHash === currentItemsHash && currentBook.chunks?.length) 
+      ? items.length // Set to end if valid
+      : 0
+  );
+  const [optimizingStatus, setOptimizingStatus] = useState<string>('');
+
+  useEffect(() => {
+      if (optimizingStatus) addLog(optimizingStatus);
+  }, [optimizingStatus]);
+
   // --- AUTO SAVE TO DRIVE ---
   useEffect(() => {
     if (!currentBook.driveFolderId) return;
@@ -114,7 +125,15 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
     setAutoSaveStatus('Sparar...');
     const handler = setTimeout(async () => {
         try {
-            const bookToSave = { ...currentBook, items, title: bookTitle, settings };
+            // Include chunks and optimizationHash in the saved book
+            const bookToSave = { 
+                ...currentBook, 
+                items, 
+                title: bookTitle, 
+                settings,
+                chunks,
+                optimizationHash: currentItemsHash 
+            };
             await saveProjectState(accessToken, bookToSave);
             setAutoSaveStatus('Sparat på Drive');
         } catch (e) {
@@ -124,29 +143,29 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
     }, 2000); 
 
     return () => clearTimeout(handler);
-  }, [items, bookTitle, currentBook.driveFolderId, settings]);
+  }, [items, bookTitle, currentBook.driveFolderId, settings, chunks, currentItemsHash]);
 
-
-  // --- OPTIMIZATION STATE ---
-  const [chunks, setChunks] = useState<ChunkData[]>([]);
-  const [optimizationCursor, setOptimizationCursor] = useState(0); 
-  const [optimizingStatus, setOptimizingStatus] = useState<string>('');
-
-  useEffect(() => {
-      if (optimizingStatus) addLog(optimizingStatus);
-  }, [optimizingStatus]);
-
-  const itemsHash = items.map(i => i.id + i.modifiedTime).join('|');
-  useEffect(() => {
-      setOptimizationCursor(0);
-      setChunks([]);
-      addLog("Startar ny beräkning...");
-  }, [itemsHash, settings.maxChunkSizeMB, settings.compressionLevel, settings.safetyMarginPercent]);
 
   // --- GREEDY OPTIMIZATION WITH PRECISE VERIFICATION ---
   useEffect(() => {
+    // Check if we can reuse existing chunks (Persisted state check)
+    const isClean = currentBook.optimizationHash === currentItemsHash;
+    const hasChunks = currentBook.chunks && currentBook.chunks.length > 0;
+    
+    // If state is already matching hash (we didn't reset it), we don't need to restart
+    // This happens if we just loaded the page and chunks/cursor were initialized correctly
+    if (isClean && hasChunks && chunks.length === currentBook.chunks!.length && optimizationCursor === items.length) {
+         return;
+    }
+
+    // If we are here, something changed or needs calculation
+    // Reset if cursor is 0 (which means we decided to restart)
+    if (optimizationCursor === 0) {
+        setChunks([]);
+        addLog("Startar ny beräkning...");
+    }
+
     let isCancelled = false;
-    // Apply Safety Margin to the limit (e.g., 5% margin reduces limit to 95%)
     const safetyFactor = (100 - (settings.safetyMarginPercent || 0)) / 100;
     const limitBytes = settings.maxChunkSizeMB * 1024 * 1024 * safetyFactor;
     
@@ -228,10 +247,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
         
         // Finalize last chunk (if not full but end of list)
         if (!chunkIsFull && currentBatch.length > 0 && finalBatchSizeBytes === 0) {
-             // We might have skipped verification for the last batch if it was small
-             // Calculate final size now mainly for display purposes
-             // But if we trust the accumulation, we can skip if we want to be super fast. 
-             // Ideally we want exact size. Let's do a quick verify if it wasn't done.
              try { const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel); finalBatchSizeBytes = pdfBytes.byteLength; } catch (e) {}
         }
 
@@ -244,7 +259,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
     };
     const timer = setTimeout(processNextStep, 100);
     return () => { isCancelled = true; clearTimeout(timer); };
-  }, [itemsHash, optimizationCursor, chunks.length, settings.compressionLevel, settings.maxChunkSizeMB, settings.safetyMarginPercent]);
+  }, [currentItemsHash, optimizationCursor, chunks.length]);
 
   // --- UPLOAD / SYNC LOGIC (Simple Linear Sync) ---
   useEffect(() => {

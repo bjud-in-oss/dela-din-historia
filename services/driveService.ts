@@ -279,6 +279,16 @@ export const saveProjectState = async (accessToken: string, book: MemoryBook) =>
             processedBuffer: undefined, // Don't save binary cache to JSON
             blobUrl: undefined, // Cannot save blob URLs
             fileObj: undefined // Cannot save JS File objects
+        })),
+        // Clean chunks to avoid saving heavy buffers but keep structure
+        chunks: book.chunks?.map(chunk => ({
+            ...chunk,
+            items: chunk.items.map(item => ({
+                 ...item,
+                 processedBuffer: undefined,
+                 blobUrl: undefined,
+                 fileObj: undefined
+            }))
         }))
     };
 
