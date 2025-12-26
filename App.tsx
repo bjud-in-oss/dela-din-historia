@@ -240,17 +240,30 @@ const App: React.FC = () => {
               
               setBooks(prevLocalBooks => {
                   // Merge strategy: Keep existing full objects if ID matches, else add new
-                  // The new listDriveBookFolders now fetches thumbnails/cover images too
+                  // CRITICAL FIX: Ensure thumbnails from driveBooks are injected into localMatches
                   const merged = driveBooks.map(dBook => {
-                      const localMatch = prevLocalBooks.find(l => l.title === dBook.title || l.id === dBook.id); 
+                      const localMatch = prevLocalBooks.find(l => l.id === dBook.id || l.title === dBook.title); 
+                      
                       if (localMatch) {
-                           // Preserve local items if already loaded, but update cover/ID
+                           // Logic to inject the fresh thumbnail item into the existing local book
+                           const freshPreview = dBook.items.find(i => i.id === 'preview-cover');
+                           let updatedItems = [...localMatch.items];
+
+                           if (freshPreview) {
+                               // Remove any stale preview items
+                               updatedItems = updatedItems.filter(i => i.id !== 'preview-cover');
+                               // Add fresh preview at start so Dashboard sees it
+                               updatedItems = [freshPreview, ...updatedItems];
+                           } else if (localMatch.items.length === 0) {
+                               // Fallback if localMatch was empty
+                               updatedItems = dBook.items;
+                           }
+
                            return { 
                                ...localMatch, 
                                driveFolderId: dBook.driveFolderId, 
                                id: dBook.id,
-                               // Update thumbnail if not set locally
-                               items: localMatch.items.length > 0 ? localMatch.items : dBook.items 
+                               items: updatedItems 
                            };
                       }
                       return dBook;

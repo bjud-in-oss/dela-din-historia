@@ -526,8 +526,9 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
   return (
     <>
+      {/* Changed min-h-screen to min-h-full to prevent forced scrolling in already constrained containers */}
       <div 
-        className="flex flex-col lg:flex-row h-auto min-h-screen lg:h-full bg-[#f0f2f5] lg:overflow-hidden" 
+        className="flex flex-col lg:flex-row h-auto min-h-full lg:h-full bg-[#f0f2f5] lg:overflow-hidden" 
         onClick={() => {
             setSelectedIds(new Set());
             if (isSidebarCompact && showSidebarOverlay) {

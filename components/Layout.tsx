@@ -140,8 +140,8 @@ const Layout: React.FC<LayoutProps> = ({
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="flex-1 relative overflow-hidden">
+      {/* Main Content - Updated to allow scrolling on mobile */}
+      <main className="flex-1 relative overflow-y-auto overflow-x-hidden">
         {children}
       </main>
     </div>

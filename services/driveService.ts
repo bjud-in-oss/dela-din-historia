@@ -257,13 +257,16 @@ export const saveProjectState = async (accessToken: string, book: MemoryBook) =>
 const findCoverImageForFolder = async (accessToken: string, folderId: string): Promise<string | undefined> => {
     try {
         // Look for images, excluding processed PDFs if possible (though mimetype filter helps)
-        // Limit to 1 result for speed
+        // Limit to 1 result for speed, but sort by modifiedTime desc to get the LATEST image
         const query = `'${folderId}' in parents and mimeType contains 'image/' and trashed = false`;
         const params = new URLSearchParams({
             q: query,
             fields: 'files(thumbnailLink)',
             pageSize: '1',
-            corpora: 'user'
+            orderBy: 'modifiedTime desc', // Get the newest image
+            corpora: 'user',
+            supportsAllDrives: 'true',
+            includeItemsFromAllDrives: 'true'
         });
         
         const res = await fetch(`${DRIVE_API_URL}/files?${params.toString()}`, {
