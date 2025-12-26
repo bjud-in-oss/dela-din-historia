@@ -290,6 +290,12 @@ export const splitPdfIntoPages = async (pdfBlob: Blob, filenameBase: string): Pr
   const pageCount = sourcePdf.getPageCount();
   const resultFiles: DriveFile[] = [];
 
+  // CLEAN NAMING: Remove previous suffix junk like " (Samlad)" or " (Sida X)" to restore original feel
+  const cleanBase = filenameBase
+    .replace(/ \(Samlad\)/g, '')
+    .replace(/ \(Sida \d+\)/g, '')
+    .replace(/\.pdf$/i, '');
+
   for (let i = 0; i < pageCount; i++) {
     const newPdf = await PDFDocument.create();
     const [copiedPage] = await newPdf.copyPages(sourcePdf, [i]);
@@ -302,7 +308,7 @@ export const splitPdfIntoPages = async (pdfBlob: Blob, filenameBase: string): Pr
 
     resultFiles.push({
       id: `split-${Date.now()}-${i}`,
-      name: `${filenameBase} (Sida ${i + 1})`,
+      name: `${cleanBase} (Sida ${i + 1})`,
       type: FileType.PDF,
       size: blob.size,
       modifiedTime: new Date().toISOString(),

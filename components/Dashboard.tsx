@@ -8,13 +8,16 @@ interface DashboardProps {
   onCreateNew: () => void;
   onOpenBook: (book: MemoryBook) => void;
   onUpdateBooks: (books: MemoryBook[]) => void;
-  onDeleteBook: (book: MemoryBook) => void;
+  onDeleteBook: (book: MemoryBook) => Promise<void>; // Updated to Promise
 }
 
 const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, onUpdateBooks, onDeleteBook }) => {
   const [selectedBookIds, setSelectedBookIds] = useState<Set<string>>(new Set());
+  const [deletingBookIds, setDeletingBookIds] = useState<Set<string>>(new Set());
 
   const handleSelection = (e: React.MouseEvent, bookId: string) => {
+    if (deletingBookIds.has(bookId)) return; // Prevent interaction while deleting
+
     if (e.metaKey || e.ctrlKey || selectedBookIds.size > 0) {
         e.stopPropagation();
         e.preventDefault();
@@ -27,9 +30,25 @@ const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, o
     }
   };
 
-  const handleDeleteClick = (e: React.MouseEvent, book: MemoryBook) => {
+  const handleDeleteClick = async (e: React.MouseEvent, book: MemoryBook) => {
       e.stopPropagation();
-      onDeleteBook(book);
+      if (deletingBookIds.has(book.id)) return;
+
+      // Add to deleting set immediately to show spinner
+      setDeletingBookIds(prev => new Set(prev).add(book.id));
+      
+      try {
+          await onDeleteBook(book);
+      } catch (error) {
+          console.error("Delete failed", error);
+          // Only remove from deleting set on error (success removes the book entirely via props)
+          setDeletingBookIds(prev => {
+              const next = new Set(prev);
+              next.delete(book.id);
+              return next;
+          });
+      }
+      
       // Clean up selection if needed
       if (selectedBookIds.has(book.id)) {
         const newSet = new Set(selectedBookIds);
@@ -38,12 +57,22 @@ const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, o
       }
   };
 
-  const handleDeleteSelected = () => {
+  const handleDeleteSelected = async () => {
       if (!confirm(`Är du säker på att du vill ta bort ${selectedBookIds.size} böcker?`)) return;
-      // Note: This bulk delete is strictly local for now unless we iterate onDeleteBook
+      
+      const idsToDelete = Array.from(selectedBookIds);
+      setDeletingBookIds(prev => {
+          const next = new Set(prev);
+          idsToDelete.forEach(id => next.add(id));
+          return next;
+      });
+
+      // Process sequentially or parallel based on backend limits, here simply updating list for local UI
+      // Real implementation depends on App.tsx handler
       const remaining = books.filter(b => !selectedBookIds.has(b.id));
       onUpdateBooks(remaining);
       setSelectedBookIds(new Set());
+      setDeletingBookIds(new Set());
   };
 
   const handleShareSelected = () => {
@@ -113,28 +142,39 @@ const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, o
           {/* Book Cards */}
           {books.map((book) => {
             const isSelected = selectedBookIds.has(book.id);
+            const isDeleting = deletingBookIds.has(book.id);
             const thumb = getThumbnail(book);
             
             return (
                 <div 
                 key={book.id}
-                onClick={(e) => handleSelection(e, book.id)}
-                className="flex flex-col gap-3 group cursor-pointer relative"
+                onClick={(e) => !isDeleting && handleSelection(e, book.id)}
+                className={`flex flex-col gap-3 group cursor-pointer relative ${isDeleting ? 'opacity-70 pointer-events-none' : ''}`}
                 >
                     {/* Cover Image Container - Fixed Aspect Ratio */}
                     <div className={`aspect-[3/4] w-full bg-slate-100 rounded-xl shadow-sm relative overflow-hidden transition-all border border-slate-200 ${isSelected ? 'ring-4 ring-indigo-500 ring-offset-2' : 'group-hover:shadow-lg group-hover:-translate-y-1'}`}>
                         
+                        {/* Loading Overlay when deleting */}
+                        {isDeleting && (
+                            <div className="absolute inset-0 z-40 bg-white/80 flex flex-col items-center justify-center">
+                                <i className="fas fa-circle-notch fa-spin text-red-500 text-xl mb-2"></i>
+                                <span className="text-[10px] font-bold text-red-500 uppercase tracking-wider">Raderar...</span>
+                            </div>
+                        )}
+
                         {/* Delete Button */}
-                        <button 
-                            onClick={(e) => handleDeleteClick(e, book)}
-                            className="absolute top-2 right-2 z-30 w-6 h-6 bg-white/90 backdrop-blur text-slate-400 hover:text-red-500 hover:bg-white rounded-full flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 transition-all"
-                            title="Ta bort bok"
-                        >
-                            <i className="fas fa-times text-xs"></i>
-                        </button>
+                        {!isDeleting && (
+                            <button 
+                                onClick={(e) => handleDeleteClick(e, book)}
+                                className="absolute top-2 right-2 z-30 w-6 h-6 bg-white/90 backdrop-blur text-slate-400 hover:text-red-500 hover:bg-white rounded-full flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 transition-all"
+                                title="Ta bort bok"
+                            >
+                                <i className="fas fa-times text-xs"></i>
+                            </button>
+                        )}
 
                         {/* Selection Indicator */}
-                        {isSelected && (
+                        {isSelected && !isDeleting && (
                             <div className="absolute top-2 left-2 z-20 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center shadow-lg animate-in zoom-in">
                                 <i className="fas fa-check text-white text-xs"></i>
                             </div>
