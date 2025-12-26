@@ -182,7 +182,13 @@ const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, o
 
                         {/* Image / Placeholder */}
                         {thumb ? (
-                            <div className="w-full h-full bg-cover bg-center transition-transform duration-700 group-hover:scale-105" style={{backgroundImage: `url('${thumb}')`}}></div>
+                            <div className="w-full h-full bg-slate-50 flex items-center justify-center overflow-hidden">
+                                <img 
+                                    src={thumb} 
+                                    alt={book.title}
+                                    className="w-full h-full object-contain transition-transform duration-700 group-hover:scale-105" 
+                                />
+                            </div>
                         ) : (
                             <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-50 to-blue-50">
                                 <span className="text-4xl font-serif text-indigo-200 italic">{book.title.charAt(0)}</span>
