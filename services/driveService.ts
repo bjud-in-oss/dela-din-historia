@@ -165,3 +165,37 @@ export const fetchSharedDrives = async (accessToken: string): Promise<DriveFile[
     thumbnail: undefined
   }));
 };
+
+// --- NEW FUNCTIONS FOR MOVING FOLDERS ---
+
+export const findOrCreateFolder = async (accessToken: string, parentId: string, folderName: string): Promise<string> => {
+    const existingId = await findFileInFolder(accessToken, parentId, folderName);
+    if (existingId) return existingId;
+    return await createFolder(accessToken, parentId, folderName);
+};
+
+export const moveFile = async (accessToken: string, fileId: string, newParentId: string) => {
+    // 1. Get current parents to remove them
+    const fileRes = await fetch(`${DRIVE_API_URL}/files/${fileId}?fields=parents`, {
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+    
+    if (!fileRes.ok) throw new Error("Kunde inte hitta filen för flytt.");
+    const fileData = await fileRes.json();
+    const previousParents = fileData.parents ? fileData.parents.join(',') : '';
+
+    // 2. Update parents
+    const params = new URLSearchParams({
+        addParents: newParentId,
+        removeParents: previousParents
+    });
+
+    const updateRes = await fetch(`${DRIVE_API_URL}/files/${fileId}?${params.toString()}`, {
+        method: 'PATCH',
+        headers: { 'Authorization': `Bearer ${accessToken}` }
+    });
+
+    if (!updateRes.ok) {
+        throw new Error("Kunde inte flytta filen.");
+    }
+};

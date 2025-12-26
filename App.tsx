@@ -7,7 +7,7 @@ import StoryEditor from './components/StoryEditor';
 import Dashboard from './components/Dashboard';
 import AppLogo from './components/AppLogo';
 import LandingPage from './components/LandingPage';
-import { createFolder, fetchDriveFiles } from './services/driveService';
+import { createFolder, fetchDriveFiles, findOrCreateFolder, moveFile } from './services/driveService';
 
 declare global {
   interface Window {
@@ -318,6 +318,38 @@ const App: React.FC = () => {
     }
   };
 
+  // Handle Safe Deletion with Backup
+  const handleDeleteBook = async (book: MemoryBook) => {
+      // 1. Confirm
+      if (!confirm(`Vill du ta bort boken "${book.title}"?`)) return;
+
+      // 2. Perform Move on Drive if applicable
+      if (book.driveFolderId && user?.accessToken) {
+          try {
+              // Find "Dela din historia" root
+              const rootFiles = await fetchDriveFiles(user.accessToken, 'root');
+              let rootFolder = rootFiles.find(f => f.name === 'Dela din historia' && f.type === FileType.FOLDER);
+              
+              if (rootFolder) {
+                  // Find/Create "Papperskorg"
+                  const trashId = await findOrCreateFolder(user.accessToken, rootFolder.id, "Papperskorg");
+                  
+                  // Move the book folder to Trash
+                  await moveFile(user.accessToken, book.driveFolderId, trashId);
+                  
+                  alert(`En säkerhetskopia av boken har sparats i:\n\nDela din historia > Papperskorg > ${book.title}`);
+              }
+          } catch (e) {
+              console.error("Kunde inte flytta till papperskorgen på Drive", e);
+              alert("Kunde inte säkerhetskopiera till Drive (nätverksfel), men boken tas bort från listan.");
+          }
+      }
+
+      // 3. Update Local State
+      setBooks(prev => prev.filter(b => b.id !== book.id));
+      localStorage.setItem('memory_books', JSON.stringify(books.filter(b => b.id !== book.id)));
+  };
+
   const handleAddItemsToBook = (newItems: DriveFile[]) => {
     if (!currentBook) return;
     let updatedItems = [...currentBook.items];
@@ -378,6 +410,7 @@ const App: React.FC = () => {
                             onCreateNew={handleInitiateCreateBook} 
                             onOpenBook={setCurrentBook} 
                             onUpdateBooks={handleUpdateBooks}
+                            onDeleteBook={handleDeleteBook}
                         />
                     </div>
                 </div>

@@ -8,9 +8,10 @@ interface DashboardProps {
   onCreateNew: () => void;
   onOpenBook: (book: MemoryBook) => void;
   onUpdateBooks: (books: MemoryBook[]) => void;
+  onDeleteBook: (book: MemoryBook) => void;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, onUpdateBooks }) => {
+const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, onUpdateBooks, onDeleteBook }) => {
   const [selectedBookIds, setSelectedBookIds] = useState<Set<string>>(new Set());
 
   const handleSelection = (e: React.MouseEvent, bookId: string) => {
@@ -26,19 +27,20 @@ const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, o
     }
   };
 
-  const handleDeleteBook = (e: React.MouseEvent, bookId: string) => {
+  const handleDeleteClick = (e: React.MouseEvent, book: MemoryBook) => {
       e.stopPropagation();
-      if (!confirm(`Vill du ta bort denna bok?`)) return;
-      onUpdateBooks(books.filter(b => b.id !== bookId));
-      if (selectedBookIds.has(bookId)) {
+      onDeleteBook(book);
+      // Clean up selection if needed
+      if (selectedBookIds.has(book.id)) {
         const newSet = new Set(selectedBookIds);
-        newSet.delete(bookId);
+        newSet.delete(book.id);
         setSelectedBookIds(newSet);
       }
   };
 
   const handleDeleteSelected = () => {
       if (!confirm(`Är du säker på att du vill ta bort ${selectedBookIds.size} böcker?`)) return;
+      // Note: This bulk delete is strictly local for now unless we iterate onDeleteBook
       const remaining = books.filter(b => !selectedBookIds.has(b.id));
       onUpdateBooks(remaining);
       setSelectedBookIds(new Set());
@@ -124,7 +126,7 @@ const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, o
                         
                         {/* Delete Button */}
                         <button 
-                            onClick={(e) => handleDeleteBook(e, book.id)}
+                            onClick={(e) => handleDeleteClick(e, book)}
                             className="absolute top-2 right-2 z-30 w-6 h-6 bg-white/90 backdrop-blur text-slate-400 hover:text-red-500 hover:bg-white rounded-full flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 transition-all"
                             title="Ta bort bok"
                         >
