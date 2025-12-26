@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { DriveFile, FileType, TextConfig, RichTextLine, PageMetadata, AppSettings, MemoryBook, CompressionLevel, ChunkData } from '../types';
 import { generateCombinedPDF, splitPdfIntoPages, mergeFilesToPdf, createPreviewWithOverlay, getPdfPageCount, DEFAULT_TEXT_CONFIG, DEFAULT_FOOTER_CONFIG, getPdfDocument, renderPdfPageToCanvas, extractHighQualityImage, processFileForCache, generatePageThumbnail } from '../services/pdfService';
@@ -37,7 +36,7 @@ export interface ExportedFile {
     driveId?: string; // ID on Drive if available
 }
 
-// --- MISSING COMPONENTS DEFINITIONS ---
+// --- COMPONENTS ---
 
 const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove, onDragStart, onDragOver, chunkInfo }: any) => {
   const isHeader = item.type === FileType.HEADER;
@@ -137,73 +136,265 @@ const ListViewItem = ({ item, index, isSelected, onClick, onEdit, chunkInfo, onD
     );
 };
 
-const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolderId, onExportSuccess }: any) => {
-    const [name, setName] = useState(item.name || '');
-    const [desc, setDesc] = useState(item.description || '');
-    const [headerText, setHeaderText] = useState(item.headerText || '');
-    const [isSaving, setIsSaving] = useState(false);
-
-    const handleSave = () => {
-        onUpdate({ name, description: desc, headerText });
-        onClose();
+const RichTextListEditor = ({ lines, onChange, onFocusLine, focusedLineId }: { lines: RichTextLine[], onChange: (l: RichTextLine[]) => void, onFocusLine: (id: string | null) => void, focusedLineId: string | null }) => {
+    const handleTextChange = (id: string, newText: string) => onChange(lines.map(l => l.id === id ? { ...l, text: newText } : l));
+    const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            const newLine: RichTextLine = { id: `line-${Date.now()}`, text: '', config: { ...lines[index].config } };
+            const newLines = [...lines]; newLines.splice(index + 1, 0, newLine); onChange(newLines);
+        } else if (e.key === 'Backspace' && lines[index].text === '' && lines.length > 1) {
+            e.preventDefault(); onChange(lines.filter((_, i) => i !== index));
+        }
     };
+    if (lines.length === 0) return (<button onClick={() => onChange([{ id: `init-${Date.now()}`, text: '', config: DEFAULT_TEXT_CONFIG }])} className="text-xs text-indigo-500 font-bold hover:bg-indigo-50 p-2 rounded w-full text-left">+ Lägg till textrad</button>);
+    return (<div className="space-y-2">{lines.map((line, index) => (
+        <div key={line.id} className={`flex items-center group relative ${focusedLineId === line.id ? 'ring-2 ring-indigo-100 rounded-lg' : ''}`}>
+            <input value={line.text} onChange={(e) => handleTextChange(line.id, e.target.value)} onFocus={() => onFocusLine(line.id)} onBlur={() => {}} onKeyDown={(e) => handleKeyDown(e, index)} className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-indigo-500 outline-none py-1 px-2 font-serif text-slate-800 transition-colors" style={{ fontWeight: line.config.isBold ? 'bold' : 'normal', fontStyle: line.config.isItalic ? 'italic' : 'normal', fontSize: Math.max(12, line.config.fontSize * 0.7) + 'px', textAlign: line.config.alignment }} placeholder="Skriv här..." />
+            <button onClick={() => onChange(lines.filter(l => l.id !== line.id))} className="absolute right-2 text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-2" tabIndex={-1}><i className="fas fa-times"></i></button>
+        </div>))}</div>);
+};
+
+const SidebarThumbnail = ({ pdfDocProxy, pageIndex, item }: { pdfDocProxy: any, pageIndex: number, item?: DriveFile }) => {
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    useEffect(() => {
+        const render = async () => {
+            if (pdfDocProxy && canvasRef.current) {
+                await renderPdfPageToCanvas(pdfDocProxy, pageIndex + 1, canvasRef.current, 0.25);
+            }
+        };
+        render();
+    }, [pdfDocProxy, pageIndex]);
+
+    return <canvas ref={canvasRef} className="w-full h-full object-contain block" />;
+};
+
+const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolderId, onExportSuccess }: any) => {
+    const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
+    const [pageMeta, setPageMeta] = useState<Record<number, PageMetadata>>(item.pageMeta || {});
+    const [activePageIndex, setActivePageIndex] = useState(0);
+    const [totalPages, setTotalPages] = useState(1);
+    const [activeSection, setActiveSection] = useState<'header' | 'footer'>('header');
+    const [focusedLineId, setFocusedLineId] = useState<string | null>(null);
+    const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    const [pdfDocProxy, setPdfDocProxy] = useState<any>(null);
+    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+    const mainCanvasRef = useRef<HTMLCanvasElement>(null);
+    const [isLoadingPreview, setIsLoadingPreview] = useState(true);
+    const [isSavingImage, setIsSavingImage] = useState(false);
+
+    // Initial Load
+    useEffect(() => {
+        const init = async () => {
+             setIsLoadingPreview(true); setErrorMsg(null);
+             try {
+                const { buffer } = await processFileForCache(item, accessToken, settings.compressionLevel || 'medium');
+                const isPdfType = item.type === FileType.PDF || item.type === FileType.GOOGLE_DOC;
+                const type = isPdfType ? 'application/pdf' : 'image/jpeg';
+                
+                const sourceBlob = new Blob([buffer as any], { type });
+                // Generate preview with overlay
+                const previewUrl = await createPreviewWithOverlay(sourceBlob, item.type, pageMeta);
+                
+                const res = await fetch(previewUrl);
+                const pBlob = await res.blob();
+                setPreviewBlob(pBlob);
+                
+                const pdf = await getPdfDocument(pBlob);
+                setPdfDocProxy(pdf);
+                setTotalPages(pdf.numPages);
+                
+                // Initialize metadata if empty but legacy fields exist
+                if (Object.keys(pageMeta).length === 0 && (item.headerText || item.description)) {
+                     const initMeta: PageMetadata = { 
+                         headerLines: item.headerText ? [{ id: 'l1', text: item.headerText, config: item.textConfig || DEFAULT_TEXT_CONFIG }] : [], 
+                         footerLines: item.description ? [{ id: 'f1', text: item.description, config: DEFAULT_FOOTER_CONFIG }] : [], 
+                     };
+                    setPageMeta({ 0: initMeta });
+                }
+             } catch (e: any) { 
+                 console.error("Init failed", e); 
+                 setErrorMsg(e.message || "Kunde inte ladda filen."); 
+             } finally { setIsLoadingPreview(false); }
+        }
+        init();
+    }, []);
+
+    // Update preview when meta changes
+    useEffect(() => {
+        const update = async () => {
+            if (!item || errorMsg) return;
+            try {
+                onUpdate({ pageMeta }); // Save to parent state immediately
+                
+                const { buffer } = await processFileForCache(item, accessToken, settings.compressionLevel || 'medium');
+                const isPdfType = item.type === FileType.PDF || item.type === FileType.GOOGLE_DOC;
+                const type = isPdfType ? 'application/pdf' : 'image/jpeg';
+
+                const sourceBlob = new Blob([buffer as any], { type });
+                const url = await createPreviewWithOverlay(sourceBlob, item.type, pageMeta);
+                const res = await fetch(url);
+                const pBlob = await res.blob();
+                setPreviewBlob(pBlob);
+                const pdf = await getPdfDocument(pBlob);
+                setPdfDocProxy(pdf);
+            } catch(e) { console.error(e); }
+        };
+        // Debounce slightly to avoid rapid regenerations
+        const t = setTimeout(update, 500); return () => clearTimeout(t);
+    }, [pageMeta]);
+
+    // Render Canvas when Page Index changes
+    useEffect(() => {
+        const renderMain = async () => { 
+            if (pdfDocProxy && mainCanvasRef.current) {
+                await renderPdfPageToCanvas(pdfDocProxy, activePageIndex + 1, mainCanvasRef.current, 1.5); 
+            }
+        };
+        renderMain();
+    }, [pdfDocProxy, activePageIndex]);
+
+    const getCurrentMeta = () => pageMeta[activePageIndex] || { headerLines: [], footerLines: [] };
+    const updateCurrentMeta = (updates: Partial<PageMetadata>) => setPageMeta(prev => ({ ...prev, [activePageIndex]: { ...(prev[activePageIndex] || { headerLines: [], footerLines: [] }), ...updates } }));
     
-    const handleManualExport = async () => {
-        if (!driveFolderId) return alert("Spara boken först.");
-        setIsSaving(true);
-        try {
-            // Logic to process, compress and upload single file
-            const { buffer } = await processFileForCache(item, accessToken, settings.compressionLevel);
-            const blob = new Blob([buffer], { type: item.type === FileType.PDF ? 'application/pdf' : 'image/jpeg' });
-            const ext = item.type === FileType.PDF ? 'pdf' : 'png';
-            const filename = `${name}.${ext}`;
-            await uploadToDrive(accessToken, driveFolderId, filename, blob, item.type === FileType.PDF ? 'application/pdf' : 'image/jpeg');
-            if (onExportSuccess) onExportSuccess(filename, ext);
-            alert("Fil sparad på Drive!");
-        } catch(e) {
+    // Manual Export Logic
+    const handleCopyPageToPng = async () => {
+        if (!previewBlob || !driveFolderId) {
+            alert("Kan inte spara bilden (saknar mapp eller data).");
+            return;
+        }
+        
+        const defaultName = `${item.name.replace(/\.[^/.]+$/, "")}_Sida${activePageIndex + 1}.png`;
+        const filename = prompt("Vad ska bilden heta på Google Drive?", defaultName);
+        if (!filename) return;
+
+        setIsSavingImage(true);
+        try { 
+            const pngBlob = await extractHighQualityImage(previewBlob, activePageIndex); 
+            await uploadToDrive(accessToken, driveFolderId, filename, pngBlob, 'image/png');
+            
+            if (onExportSuccess) {
+                onExportSuccess(filename, 'png');
+            }
+
+            alert(`Bilden "${filename}" har sparats i bokens mapp på Google Drive.`);
+        } catch (e) { 
+            alert("Kunde inte spara bilden till Drive."); 
             console.error(e);
-            alert("Kunde inte exportera.");
         } finally {
-            setIsSaving(false);
+            setIsSavingImage(false);
         }
     };
 
+    const getActiveConfig = () => { const meta = getCurrentMeta(); const lines = activeSection === 'header' ? meta.headerLines : meta.footerLines; const line = lines.find(l => l.id === focusedLineId); return line?.config || (activeSection === 'header' ? DEFAULT_TEXT_CONFIG : DEFAULT_FOOTER_CONFIG); };
+    const updateActiveConfig = (key: keyof TextConfig, value: any) => { const meta = getCurrentMeta(); const isHeader = activeSection === 'header'; const lines = isHeader ? meta.headerLines : meta.footerLines; if (focusedLineId) { const newLines = lines.map(l => l.id === focusedLineId ? { ...l, config: { ...l.config, [key]: value } } : l); updateCurrentMeta(isHeader ? { headerLines: newLines } : { footerLines: newLines }); } else { const newLines = lines.map(l => ({ ...l, config: { ...l.config, [key]: value } })); updateCurrentMeta(isHeader ? { headerLines: newLines } : { footerLines: newLines }); } };
+    const currentConfig = getActiveConfig();
+
     return (
-        <div className="fixed inset-0 z-[70] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in" onClick={e => e.stopPropagation()}>
-                <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-                    <h3 className="text-lg font-bold text-slate-900">Redigera</h3>
-                    <button onClick={onClose}><i className="fas fa-times text-slate-400"></i></button>
+        <div className="fixed inset-0 z-[100] bg-slate-900 flex flex-col animate-in fade-in duration-200">
+            {/* Toolbar */}
+            <div className="bg-slate-800 text-white h-14 flex items-center justify-between px-4 border-b border-slate-700 shrink-0">
+                <div className="flex items-center space-x-4">
+                    <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="text-slate-300 hover:text-white">
+                        <i className="fas fa-bars text-lg"></i>
+                    </button>
+                    <span className="font-bold text-sm truncate max-w-[200px]">{item.name}</span>
                 </div>
-                <div className="p-6 space-y-4">
-                    {item.type === FileType.HEADER ? (
-                         <div>
-                            <label className="block text-xs font-bold text-slate-700 mb-1">Rubrik</label>
-                            <input value={headerText} onChange={e => setHeaderText(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg font-bold" />
+                <div className="flex items-center space-x-2">
+                    <span className="text-xs text-slate-400 mr-2">{activePageIndex + 1} / {totalPages}</span>
+                    <button onClick={() => setActivePageIndex(Math.max(0, activePageIndex - 1))} disabled={activePageIndex === 0} className="w-8 h-8 rounded hover:bg-slate-700 disabled:opacity-30"><i className="fas fa-chevron-left"></i></button>
+                    <button onClick={() => setActivePageIndex(Math.min(totalPages - 1, activePageIndex + 1))} disabled={activePageIndex === totalPages - 1} className="w-8 h-8 rounded hover:bg-slate-700 disabled:opacity-30"><i className="fas fa-chevron-right"></i></button>
+                </div>
+                <div className="flex items-center space-x-3">
+                    <button onClick={handleCopyPageToPng} disabled={isSavingImage} className="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center space-x-2 shadow-lg disabled:opacity-50">
+                        {isSavingImage ? <i className="fas fa-circle-notch fa-spin"></i> : <i className="fas fa-save"></i>}
+                        <span>{isSavingImage ? 'Sparar...' : 'Spara bild'}</span>
+                    </button>
+                    <button onClick={onClose} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-1.5 rounded text-xs font-bold transition-colors">Klar</button>
+                </div>
+            </div>
+            
+            {/* Workspace */}
+            <div className="flex-1 flex overflow-hidden">
+                {isSidebarOpen && (
+                    <div className="w-48 bg-[#222] border-r border-slate-700 flex flex-col overflow-y-auto custom-scrollbar shrink-0">
+                        <div className="p-4 space-y-4">
+                            {Array.from({ length: totalPages }).map((_, idx) => (
+                                <div key={idx} onClick={() => setActivePageIndex(idx)} className={`cursor-pointer group relative flex flex-col items-center ${activePageIndex === idx ? 'opacity-100' : 'opacity-60 hover:opacity-100'}`}>
+                                    <div className={`w-full aspect-[210/297] bg-white rounded-sm overflow-hidden relative shadow-sm transition-all ${activePageIndex === idx ? 'ring-2 ring-indigo-500' : ''}`}>
+                                        <SidebarThumbnail pdfDocProxy={pdfDocProxy} pageIndex={idx} item={item} />
+                                    </div>
+                                    <span className="text-[10px] text-slate-400 mt-1">{idx + 1}</span>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                
+                {/* Main View */}
+                <div className="flex-1 bg-[#1a1a1a] relative flex items-center justify-center overflow-auto p-8">
+                     {isLoadingPreview && (
+                         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 backdrop-blur-sm">
+                             <i className="fas fa-circle-notch fa-spin text-indigo-400 text-4xl mb-4"></i>
+                             <p className="text-white font-bold text-sm">Optimerar för redigering...</p>
                          </div>
-                    ) : (
-                        <>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">Filnamn</label>
-                                <input value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg" />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-700 mb-1">Beskrivning / Bildtext</label>
-                                <textarea value={desc} onChange={e => setDesc(e.target.value)} className="w-full px-3 py-2 border border-slate-300 rounded-lg h-24 resize-none" />
-                            </div>
-                        </>
-                    )}
-                </div>
-                <div className="p-4 bg-slate-50 flex justify-between items-center">
-                     {item.type !== FileType.HEADER && (
-                         <button onClick={handleManualExport} disabled={isSaving} className="text-xs font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-2">
-                             {isSaving ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-cloud-upload-alt"></i>}
-                             Spara separat till Drive
-                         </button>
                      )}
-                     <div className="flex space-x-2 ml-auto">
-                        <button onClick={onClose} className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-200 rounded-lg">Avbryt</button>
-                        <button onClick={handleSave} className="px-4 py-2 bg-slate-900 text-white font-bold rounded-lg hover:bg-indigo-600">Spara</button>
+                     {errorMsg && !isLoadingPreview && (
+                         <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 z-10">
+                             <div className="bg-slate-800 p-8 rounded-2xl max-w-md text-center border border-slate-700">
+                                 <i className="fas fa-exclamation-triangle text-4xl text-amber-500 mb-4"></i>
+                                 <h3 className="text-white font-bold text-lg mb-2">Hoppsan!</h3>
+                                 <p className="text-slate-300 text-sm mb-6">{errorMsg}</p>
+                                 <button onClick={onClose} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 font-bold text-sm">Stäng</button>
+                             </div>
+                         </div>
+                     )}
+                     <div className="shadow-2xl bg-white relative">
+                         <canvas ref={mainCanvasRef} className="block max-w-full max-h-[85vh] h-auto w-auto" />
+                     </div>
+                </div>
+                
+                {/* Right Panel: Tools */}
+                <div className="w-80 bg-white border-l border-slate-200 flex flex-col z-20 shadow-xl shrink-0">
+                     <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center space-x-3">
+                         <div className="shrink-0"><AppLogo variant="phase2" className="w-8 h-8" /></div>
+                         <h3 className="font-bold text-slate-800 text-lg leading-tight">Berätta kortfattat</h3>
+                     </div>
+                     <div className="bg-white p-2 border-b border-slate-200 flex flex-wrap gap-2">
+                         <div className="flex bg-slate-100 rounded p-1">
+                             <button onClick={() => updateActiveConfig('isBold', !currentConfig.isBold)} className={`w-7 h-7 rounded text-xs ${currentConfig.isBold ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-bold"></i></button>
+                             <button onClick={() => updateActiveConfig('isItalic', !currentConfig.isItalic)} className={`w-7 h-7 rounded text-xs ${currentConfig.isItalic ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-italic"></i></button>
+                         </div>
+                         <div className="flex bg-slate-100 rounded p-1">
+                             <button onClick={() => updateActiveConfig('alignment', 'left')} className={`w-7 h-7 rounded text-xs ${currentConfig.alignment === 'left' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-align-left"></i></button>
+                             <button onClick={() => updateActiveConfig('alignment', 'center')} className={`w-7 h-7 rounded text-xs ${currentConfig.alignment === 'center' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-align-center"></i></button>
+                             <button onClick={() => updateActiveConfig('alignment', 'right')} className={`w-7 h-7 rounded text-xs ${currentConfig.alignment === 'right' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-align-right"></i></button>
+                         </div>
+                         {activeSection === 'header' && (
+                             <div className="flex bg-slate-100 rounded p-1">
+                                 <button onClick={() => updateActiveConfig('verticalPosition', 'top')} className={`w-7 h-7 rounded text-xs ${currentConfig.verticalPosition === 'top' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-arrow-up"></i></button>
+                                 <button onClick={() => updateActiveConfig('verticalPosition', 'center')} className={`w-7 h-7 rounded text-xs ${currentConfig.verticalPosition === 'center' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-arrows-alt-v"></i></button>
+                                 <button onClick={() => updateActiveConfig('verticalPosition', 'bottom')} className={`w-7 h-7 rounded text-xs ${currentConfig.verticalPosition === 'bottom' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-arrow-down"></i></button>
+                             </div>
+                         )}
+                     </div>
+                     <div className="px-4 py-2 border-b border-slate-100">
+                         <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-1"><span>Textstorlek</span><span>{currentConfig.fontSize}px</span></div>
+                         <input type="range" min="8" max="72" value={currentConfig.fontSize} onChange={(e) => updateActiveConfig('fontSize', parseInt(e.target.value))} className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                     </div>
+                     <div className="flex-1 overflow-y-auto p-4 space-y-6">
+                        <div className={`rounded-lg border p-3 cursor-pointer transition-all ${activeSection === 'header' ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-200' : 'bg-white border-slate-200 hover:border-slate-300'}`} onClick={() => setActiveSection('header')}>
+                            <label className="text-[10px] font-black uppercase text-indigo-900 mb-2 block">Text PÅ sidan</label>
+                            <RichTextListEditor lines={getCurrentMeta().headerLines || []} onChange={(lines) => updateCurrentMeta({ headerLines: lines })} onFocusLine={setFocusedLineId} focusedLineId={focusedLineId}/>
+                        </div>
+                        <div className={`rounded-lg border p-3 cursor-pointer transition-all ${activeSection === 'footer' ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-200' : 'bg-white border-slate-200 hover:border-slate-300'}`} onClick={() => setActiveSection('footer')}>
+                            <label className="text-[10px] font-black uppercase text-slate-500 mb-2 block">Text UNDER sidan</label>
+                            <RichTextListEditor lines={getCurrentMeta().footerLines || []} onChange={(lines) => updateCurrentMeta({ footerLines: lines })} onFocusLine={setFocusedLineId} focusedLineId={focusedLineId}/>
+                        </div>
+                         <label className="flex items-center space-x-3 p-3 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100 transition-colors border border-slate-100">
+                             <input type="checkbox" checked={getCurrentMeta().hideObject || false} onChange={(e) => updateCurrentMeta({ hideObject: e.target.checked })} className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"/>
+                             <div><span className="text-xs font-bold text-slate-700 block">Dölj originalbilden</span></div>
+                         </label>
                      </div>
                 </div>
             </div>
@@ -694,7 +885,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
                 {viewMode === 'grid' && (
                     <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 select-none">
-                        <button onClick={(e) => { e.stopPropagation(); onOpenSourceSelector(null); }} className="aspect-[210/297] rounded-sm border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all group bg-white shadow-sm"><div className="mb-2 transform group-hover:scale-110 transition-transform"><AppLogo variant="phase1" className="w-12 h-12" /></div><div className="w-8 h-8 rounded-full bg-slate-100 group-hover:bg-white group-hover:shadow-md flex items-center justify-center mb-2 transition-all"><i className="fas fa-plus text-lg"></i></div><span className="text-sm font-bold uppercase tracking-wider text-center px-2">Lägg till<br/>minne</span></button>
+                        <button onClick={(e) => { e.stopPropagation(); onOpenSourceSelector(null); }} className="aspect-[210/297] rounded-sm border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all group bg-white shadow-sm"><div className="mb-2 transform group-hover:scale-110 transition-transform"><AppLogo variant="phase1" className="w-20 h-20" /></div><div className="w-8 h-8 rounded-full bg-slate-100 group-hover:bg-white group-hover:shadow-md flex items-center justify-center mb-2 transition-all"><i className="fas fa-plus text-lg"></i></div><span className="text-sm font-bold uppercase tracking-wider text-center px-2">Lägg till<br/>minne</span></button>
                         {filteredItems.map((item, index) => {
                             const originalIndex = items.findIndex(i => i.id === item.id);
                             const chunk = getChunkForItem(item.id);
