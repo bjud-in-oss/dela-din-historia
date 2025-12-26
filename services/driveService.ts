@@ -54,7 +54,7 @@ export const fetchDriveFiles = async (
     type: mapMimeType(f.mimeType),
     size: parseInt(f.size || '0'),
     thumbnail: f.thumbnailLink,
-    modifiedTime: new Date(f.modifiedTime).toLocaleDateString(),
+    modifiedTime: f.modifiedTime, // Return RAW ISO string for consistency
     parentId: folderId
   })).sort((a: any, b: any) => 
     a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
@@ -90,11 +90,21 @@ export const createFolder = async (accessToken: string, parentId: string, name: 
   return data.id;
 };
 
-// Find existing file to avoid duplicates
+// Find existing file to avoid duplicates - UPDATED for robust searching
 const findFileInFolder = async (accessToken: string, folderId: string, filename: string): Promise<string | null> => {
     try {
         const query = `name = '${filename}' and '${folderId}' in parents and trashed = false`;
-        const response = await fetch(`${DRIVE_API_URL}/files?q=${encodeURIComponent(query)}&fields=files(id)`, {
+        
+        // Add critical search parameters to ensure visibility across drives/reload
+        const params = new URLSearchParams({
+            q: query,
+            fields: 'files(id)',
+            supportsAllDrives: 'true',
+            includeItemsFromAllDrives: 'true',
+            corpora: 'user' // Default search scope
+        });
+
+        const response = await fetch(`${DRIVE_API_URL}/files?${params.toString()}`, {
             headers: { 'Authorization': `Bearer ${accessToken}` }
         });
         const data = await response.json();
@@ -246,7 +256,7 @@ export const saveProjectState = async (accessToken: string, book: MemoryBook) =>
 // Scan the 'Dela din historia' root for book folders
 export const listDriveBookFolders = async (accessToken: string): Promise<MemoryBook[]> => {
     try {
-        // 1. Find root
+        // 1. Find root - Updated logic in findFileInFolder makes this robust
         const rootId = await findFileInFolder(accessToken, 'root', 'Dela din historia');
         if (!rootId) return [];
 
@@ -259,7 +269,7 @@ export const listDriveBookFolders = async (accessToken: string): Promise<MemoryB
             .map(f => ({
                 id: f.id, // Use Drive ID as Book ID for robustness
                 title: f.name,
-                createdAt: f.modifiedTime, // Drive modified time
+                createdAt: f.modifiedTime, // Drive modified time (now ISO)
                 items: [], // Will be loaded on open
                 driveFolderId: f.id
             }));

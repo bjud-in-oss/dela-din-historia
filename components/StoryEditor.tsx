@@ -480,7 +480,15 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
   return (
     <>
-      <div className="flex h-full bg-[#f0f2f5] overflow-hidden" onClick={() => setSelectedIds(new Set())}>
+      <div 
+        className="flex h-full bg-[#f0f2f5] overflow-hidden" 
+        onClick={() => {
+            setSelectedIds(new Set());
+            if (isSidebarCompact && showSidebarOverlay) {
+                setShowSidebarOverlay(false);
+            }
+        }}
+      >
          {isProcessing && (
             <div className="fixed inset-0 z-[60] bg-white/80 backdrop-blur-sm flex items-center justify-center">
                 <div className="flex flex-col items-center">
@@ -507,14 +515,14 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                     {/* View Controls */}
                     <div className="flex items-center bg-slate-200 rounded-lg p-1 shrink-0">
                         <button 
-                            onClick={() => setViewMode('grid')}
+                            onClick={(e) => { e.stopPropagation(); setViewMode('grid'); }}
                             className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                             title="Rutnät"
                         >
                             <i className="fas fa-th-large"></i>
                         </button>
                         <button 
-                            onClick={() => setViewMode('list')}
+                            onClick={(e) => { e.stopPropagation(); setViewMode('list'); }}
                             className={`p-2 rounded-md transition-all ${viewMode === 'list' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                             title="Lista"
                         >
@@ -527,7 +535,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                 {activeChunkFilter !== null && (
                     <div className="mb-6 flex items-center justify-between bg-indigo-50 px-4 py-2 rounded-lg border border-indigo-100">
                         <span className="text-sm font-bold text-indigo-700">Visar filer för Del {activeChunkFilter}</span>
-                        <button onClick={() => setActiveChunkFilter(null)} className="text-xs bg-white hover:bg-indigo-100 px-3 py-1 rounded shadow-sm font-bold text-indigo-600 transition-colors">
+                        <button onClick={(e) => { e.stopPropagation(); setActiveChunkFilter(null); }} className="text-xs bg-white hover:bg-indigo-100 px-3 py-1 rounded shadow-sm font-bold text-indigo-600 transition-colors">
                             Visa alla
                         </button>
                     </div>
@@ -539,8 +547,8 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                         <span className="font-bold text-sm">{selectedIds.size} valda</span>
                         <div className="flex space-x-4">
                             <button onClick={(e) => { e.stopPropagation(); handleInsertAfterSelection(); }} className="hover:text-emerald-400 font-bold text-xs flex items-center space-x-1"><i className="fas fa-plus-circle"></i> <span>Lägg till</span></button>
-                            {selectedIds.size > 1 && <button onClick={handleMergeItems} className="hover:text-indigo-300 font-bold text-xs flex items-center space-x-1"><i className="fas fa-object-group"></i> <span>Slå ihop</span></button>}
-                            <button onClick={() => { onUpdateItems(items.filter(i => !selectedIds.has(i.id))); setSelectedIds(new Set()); }} className="hover:text-red-400 font-bold text-xs flex items-center space-x-1"><i className="fas fa-trash"></i> <span>Ta bort</span></button>
+                            {selectedIds.size > 1 && <button onClick={(e) => { e.stopPropagation(); handleMergeItems(); }} className="hover:text-indigo-300 font-bold text-xs flex items-center space-x-1"><i className="fas fa-object-group"></i> <span>Slå ihop</span></button>}
+                            <button onClick={(e) => { e.stopPropagation(); onUpdateItems(items.filter(i => !selectedIds.has(i.id))); setSelectedIds(new Set()); }} className="hover:text-red-400 font-bold text-xs flex items-center space-x-1"><i className="fas fa-trash"></i> <span>Ta bort</span></button>
                         </div>
                     </div>
                 )}
@@ -550,7 +558,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                     <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 select-none">
                         {/* Add Button */}
                         <button 
-                            onClick={() => onOpenSourceSelector(null)}
+                            onClick={(e) => { e.stopPropagation(); onOpenSourceSelector(null); }}
                             className="aspect-[210/297] rounded-sm border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all group bg-white shadow-sm"
                         >
                             <div className="mb-2 transform group-hover:scale-110 transition-transform">
@@ -591,7 +599,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                 {viewMode === 'list' && (
                     <div className="flex flex-col space-y-2 select-none">
                          <button 
-                            onClick={() => onOpenSourceSelector(null)}
+                            onClick={(e) => { e.stopPropagation(); onOpenSourceSelector(null); }}
                             className="w-full p-4 border-2 border-dashed border-slate-300 rounded-lg flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all font-bold text-sm mb-4"
                         >
                             <i className="fas fa-plus mr-2"></i> Lägg till minne
@@ -625,6 +633,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
          {/* RIGHT: OUTPUT (Responsive Container) */}
          <div 
             ref={rightColumnRef} 
+            onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside the panel
             className={`bg-white border-l border-slate-200 shadow-xl z-20 flex flex-col shrink-0 transition-all duration-300 relative ${isSidebarCompact ? 'w-16' : 'w-80'}`}
          >
              {renderFilesList(isSidebarCompact)}
