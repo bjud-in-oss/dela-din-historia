@@ -471,18 +471,11 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   };
   const currentItemsHash = useMemo(generateHash, [items, settings]);
 
-  // Init state with saved chunks if hash matches. 
-  // Trust the 'optimizationCursor' stored in the book if it exists.
   const [chunks, setChunks] = useState<ChunkData[]>(currentBook.chunks || []);
-  const [optimizationCursor, setOptimizationCursor] = useState(
-      (currentBook.optimizationHash === currentItemsHash && currentBook.optimizationCursor !== undefined) 
-      ? currentBook.optimizationCursor 
-      : (currentBook.chunks?.length && currentBook.optimizationHash === currentItemsHash) ? items.length : 0
-  );
+  const [optimizationCursor, setOptimizationCursor] = useState(0);
   
   const [optimizingStatus, setOptimizingStatus] = useState<string>('');
   
-  // Use a ref to track chunks for autosave to avoid closure staleness in timeout
   const chunksRef = useRef(chunks);
   const cursorRef = useRef(optimizationCursor);
 
@@ -493,6 +486,59 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       if (optimizingStatus) addLog(optimizingStatus);
   }, [optimizingStatus]);
 
+  // --- RECONCILIATION & INIT LOGIC ---
+  useEffect(() => {
+      // 1. Initial Load from Saved State
+      if (chunks.length === 0 && currentBook.chunks && currentBook.chunks.length > 0 && currentBook.optimizationHash === currentItemsHash) {
+          setChunks(currentBook.chunks);
+          setOptimizationCursor(items.length);
+          return;
+      }
+
+      // 2. Reconciliation on Change (Insertion/Deletion/Move)
+      // Check which existing chunks are still valid by comparing their content to current items
+      let itemIndex = 0;
+      let validChunks: ChunkData[] = [];
+      let mismatchFound = false;
+
+      for (const chunk of chunks) {
+          if (mismatchFound) break; // Optimization: stop checking once we find a diff
+
+          const chunkLen = chunk.items.length;
+          // Check bounds
+          if (itemIndex + chunkLen > items.length) {
+              mismatchFound = true;
+              break;
+          }
+
+          // Check identity of items in this range
+          const currentSlice = items.slice(itemIndex, itemIndex + chunkLen);
+          const isMatch = currentSlice.every((item, i) => item.id === chunk.items[i].id); 
+          
+          if (isMatch) {
+              validChunks.push(chunk);
+              itemIndex += chunkLen;
+          } else {
+              mismatchFound = true;
+          }
+      }
+
+      // Update state if we found invalid chunks or if cursor needs adjustment
+      if (mismatchFound || validChunks.length < chunks.length) {
+          setChunks(validChunks);
+          setOptimizationCursor(itemIndex);
+          if (items.length > itemIndex) setOptimizingStatus('Omorganiserar...');
+      } else if (itemIndex < items.length && optimizationCursor > items.length) {
+          // Handle case where items shrank but matched prefix (e.g. deleted last item)
+          setOptimizationCursor(items.length);
+      } else if (itemIndex < items.length && optimizationCursor === items.length && validChunks.length === chunks.length) {
+          // Handle case where item was appended (matched all previous chunks)
+          setOptimizationCursor(itemIndex);
+      }
+
+  }, [currentItemsHash]); // Run whenever hash changes (items change)
+
+
   // --- AUTO SAVE TO DRIVE ---
   useEffect(() => {
     if (!currentBook.driveFolderId) return;
@@ -500,14 +546,13 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
     setAutoSaveStatus('Sparar...');
     const handler = setTimeout(async () => {
         try {
-            // Include chunks and optimizationHash in the saved book
             const bookToSave = { 
                 ...currentBook, 
                 items, 
                 title: bookTitle, 
                 settings,
-                chunks: chunksRef.current, // Use ref for latest state
-                optimizationCursor: cursorRef.current, // Save exact cursor
+                chunks: chunksRef.current, 
+                optimizationCursor: cursorRef.current, 
                 optimizationHash: currentItemsHash 
             };
             await saveProjectState(accessToken, bookToSave);
@@ -524,19 +569,10 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
   // --- GREEDY OPTIMIZATION WITH PRECISE VERIFICATION ---
   useEffect(() => {
-    const isClean = currentBook.optimizationHash === currentItemsHash;
-    const hasChunks = currentBook.chunks && currentBook.chunks.length > 0;
-    
-    // Resume logic:
-    // If state is clean and we are at the end, stop.
-    if (isClean && optimizationCursor >= items.length && hasChunks) {
+    // If we are done, do nothing
+    if (optimizationCursor >= items.length) {
+         if (optimizingStatus) setOptimizingStatus('');
          return;
-    }
-
-    // New start logic:
-    if (optimizationCursor === 0 && chunks.length > 0 && !isClean) {
-        setChunks([]); // Reset chunks if hash mismatch (settings changed)
-        addLog("Startar ny beräkning...");
     }
 
     let isCancelled = false;
@@ -549,6 +585,8 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
     const processNextStep = async () => {
         if (isCancelled) return;
+        
+        // Double check bounds inside async
         if (optimizationCursor >= items.length) {
             setOptimizingStatus('');
             return;
@@ -567,7 +605,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
              setOptimizingStatus(`Del ${currentChunkId}: Analyserar ${item.name}...`);
              let itemSize = item.processedSize;
              
-             // Check if we have size in metadata (saved in project.json) or need to process
              let needsProcessing = (!item.processedSize) || item.compressionLevelUsed !== settings.compressionLevel;
 
              if (needsProcessing) {
