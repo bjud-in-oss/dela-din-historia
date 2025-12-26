@@ -30,7 +30,7 @@ const App: React.FC = () => {
   const [googleLoadError, setGoogleLoadError] = useState(false);
   
   const [currentBook, setCurrentBook] = useState<MemoryBook | null>(null);
-  const [isLoadingBook, setIsLoadingBook] = useState(false); // New state for loading book details
+  const [isLoadingBook, setIsLoadingBook] = useState(false); 
 
   const [showSourceSelector, setShowSourceSelector] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false); 
@@ -156,19 +156,8 @@ const App: React.FC = () => {
               const driveBooks = await listDriveBookFolders(user.accessToken!);
               
               setBooks(prevLocalBooks => {
-                  // Merge strategy:
-                  // 1. Keep local books if they match an ID from Drive (prefer Drive metadata?)
-                  // 2. Add new books from Drive that aren't local
-                  // 3. Remove local books that shouldn't exist? (Maybe safer to keep them visually but mark as sync issue? For now, we trust Drive listing)
-                  
-                  // Simple approach: Trust Drive list for existence. 
-                  // If we have local detail (items > 0), maybe keep it, but project.json load will override anyway.
-                  
-                  // Map Drive ID to existing local book to preserve some state if needed, 
-                  // but mostly we want to populate the dashboard with what's on Drive.
-                  
                   const merged = driveBooks.map(dBook => {
-                      const localMatch = prevLocalBooks.find(l => l.title === dBook.title); // Match by title if ID differs (legacy)
+                      const localMatch = prevLocalBooks.find(l => l.title === dBook.title); 
                       if (localMatch) {
                            return { ...localMatch, driveFolderId: dBook.driveFolderId, id: dBook.id };
                       }
@@ -281,7 +270,6 @@ const App: React.FC = () => {
     }
   };
 
-  // OPEN BOOK: Load state from Drive
   const handleOpenBook = async (book: MemoryBook) => {
       if (!user?.accessToken) {
           alert("Du måste vara inloggad för att öppna böcker.");
@@ -290,15 +278,12 @@ const App: React.FC = () => {
       
       setIsLoadingBook(true);
       try {
-          // Attempt to load project.json from the folder
           if (book.driveFolderId) {
               const cloudState = await fetchProjectState(user.accessToken, book.driveFolderId);
               if (cloudState) {
                   setCurrentBook(cloudState);
-                  // Also update the book in the list in case metadata changed
                   setBooks(prev => prev.map(b => b.id === book.id ? { ...b, ...cloudState } : b));
               } else {
-                  // No project file? Just open empty/local version
                   setCurrentBook(book);
               }
           } else {
@@ -306,7 +291,7 @@ const App: React.FC = () => {
           }
       } catch (e) {
           console.error("Failed to load book state", e);
-          setCurrentBook(book); // Fallback
+          setCurrentBook(book); 
       } finally {
           setIsLoadingBook(false);
       }
@@ -412,7 +397,6 @@ const App: React.FC = () => {
                   if (!prevBook) return null;
                   const newItems = typeof newItemsOrUpdater === 'function' ? newItemsOrUpdater(prevBook.items) : newItemsOrUpdater;
                   const updatedBook = { ...prevBook, items: newItems };
-                  // Don't update global books here to avoid flicker, handled by Editor auto-save or back
                   return updatedBook;
               });
           }}
@@ -423,6 +407,7 @@ const App: React.FC = () => {
           onCloseShareView={() => setShowShareModal(false)}
           onOpenSourceSelector={(idx) => { setInsertAtIndex(idx); setShowSourceSelector(true); }}
           settings={settings}
+          onUpdateSettings={setSettings}
         />
       );
   };
@@ -513,28 +498,11 @@ const App: React.FC = () => {
         <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in">
              <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-                <h3 className="text-lg font-bold text-slate-900">Inställningar</h3>
+                <h3 className="text-lg font-bold text-slate-900">App-inställningar</h3>
                 <button onClick={() => setShowSettingsModal(false)} className="text-slate-400 hover:text-red-500"><i className="fas fa-times"></i></button>
              </div>
              <div className="p-6 space-y-6">
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">Max filstorlek för FamilySearch</label>
-                  <p className="text-xs text-slate-500 mb-3">Styr hur stor varje del-PDF får vara innan boken delas upp. FamilySearch har en gräns på 15 MB.</p>
-                  <div className="flex items-center space-x-3">
-                    <input type="number" min="5" max="50" step="0.1" value={settings.maxChunkSizeMB} onChange={(e) => setSettings({...settings, maxChunkSizeMB: parseFloat(e.target.value)})} className="w-24 px-3 py-2 border border-slate-300 rounded-lg text-sm font-bold"/>
-                    <span className="text-sm font-bold text-slate-600">MB</span>
-                  </div>
-                </div>
-                <div>
-                   <label className="block text-sm font-bold text-slate-700 mb-2">Komprimeringsgrad</label>
-                   <div className="grid grid-cols-3 gap-2">
-                      {(['low', 'medium', 'high'] as CompressionLevel[]).map(level => (
-                        <button key={level} onClick={() => setSettings({...settings, compressionLevel: level})} className={`py-2 px-3 rounded-lg text-xs font-bold capitalize border ${settings.compressionLevel === level ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>
-                          {level === 'low' ? 'Låg' : level === 'medium' ? 'Medium' : 'Hög'}
-                        </button>
-                      ))}
-                   </div>
-                </div>
+                <p className="text-sm text-slate-500">De flesta inställningar hittar du nu direkt i arbetsvyn till höger för enklare åtkomst.</p>
              </div>
              <div className="p-4 bg-slate-50 text-right">
                 <button onClick={() => setShowSettingsModal(false)} className="px-6 py-2 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800">Klar</button>

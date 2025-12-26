@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { DriveFile, FileType, TextConfig, RichTextLine, PageMetadata, AppSettings, MemoryBook } from '../types';
+import { DriveFile, FileType, TextConfig, RichTextLine, PageMetadata, AppSettings, MemoryBook, CompressionLevel } from '../types';
 import { generateCombinedPDF, splitPdfIntoPages, mergeFilesToPdf, createPreviewWithOverlay, getPdfPageCount, DEFAULT_TEXT_CONFIG, DEFAULT_FOOTER_CONFIG, getPdfDocument, renderPdfPageToCanvas, extractHighQualityImage, processFileForCache, generatePageThumbnail } from '../services/pdfService';
 import { uploadToDrive, saveProjectState } from '../services/driveService';
 import FamilySearchExport from './FamilySearchExport';
@@ -49,6 +49,7 @@ interface StoryEditorProps {
   onCloseShareView: () => void;
   onOpenSourceSelector: (index: number | null) => void;
   settings: AppSettings;
+  onUpdateSettings: (s: AppSettings) => void;
 }
 
 const StoryEditor: React.FC<StoryEditorProps> = ({ 
@@ -61,7 +62,8 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   showShareView,
   onCloseShareView,
   onOpenSourceSelector,
-  settings
+  settings,
+  onUpdateSettings
 }) => {
   const [editingItem, setEditingItem] = useState<DriveFile | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -70,14 +72,14 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [activeChunkFilter, setActiveChunkFilter] = useState<number | null>(null);
   const [autoSaveStatus, setAutoSaveStatus] = useState<string>('Sparat');
-
+  
   // Layout State
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [isSidebarCompact, setIsSidebarCompact] = useState(false);
   const [showSidebarOverlay, setShowSidebarOverlay] = useState(false);
   const rightColumnRef = useRef<HTMLDivElement>(null);
 
   // --- AUTO SAVE TO DRIVE ---
-  // Debounce save when items or title changes
   useEffect(() => {
     if (!currentBook.driveFolderId) return;
     
@@ -102,7 +104,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   const [optimizationCursor, setOptimizationCursor] = useState(0); 
   const [optimizingStatus, setOptimizingStatus] = useState<string>('');
 
-  // Reset optimization when fundamental items change
   const itemsHash = items.map(i => i.id + i.modifiedTime).join('|');
   useEffect(() => {
       setOptimizationCursor(0);
@@ -315,19 +316,64 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       <>
         <div className={`p-6 bg-slate-50 border-b border-slate-100 ${isCompact ? 'flex justify-center p-4' : ''}`}>
              {!isCompact ? (
-                 <>
-                    <h2 className="text-xl font-serif font-bold text-slate-900 leading-tight">Filer till FamilySearch</h2>
-                    <div className="flex justify-between items-center mt-1">
-                        <p className="text-[10px] text-slate-500 font-medium">
-                            {optimizingStatus ? <span className="text-amber-600 animate-pulse"><i className="fas fa-circle-notch fa-spin mr-1"></i> {optimizingStatus}</span> : 'Klar att spara och dela'}
+                 <div className="space-y-4">
+                    <div>
+                        <h2 className="text-xl font-serif font-bold text-slate-900 leading-tight">Filer till FamilySearch</h2>
+                        
+                        {/* Status Line */}
+                        <div className="flex justify-between items-center mt-1">
+                            <p className="text-[10px] text-slate-500 font-medium">
+                                {optimizingStatus ? <span className="text-amber-600 animate-pulse"><i className="fas fa-circle-notch fa-spin mr-1"></i> {optimizingStatus}</span> : 'Klar att spara och dela'}
+                            </p>
+                            {autoSaveStatus && <span className={`text-[10px] font-bold ${autoSaveStatus === 'Kunde inte spara' ? 'text-red-500' : 'text-emerald-600'}`}>{autoSaveStatus}</span>}
+                        </div>
+
+                        {/* Drive Path - Truncated nicely */}
+                        <div className="text-[10px] text-slate-400 mt-2 bg-white p-2 rounded border border-slate-200 flex items-center" title={`Min Enhet / Dela din historia / ${bookTitle}`}>
+                             <i className="fab fa-google-drive mr-2 text-slate-500 shrink-0"></i>
+                             <div className="truncate font-mono text-slate-600">
+                                <span className="opacity-50">.../</span>{bookTitle}
+                             </div>
+                        </div>
+                    </div>
+
+                    {/* Settings Panel */}
+                    <div className="bg-white rounded-lg border border-slate-200 p-3 space-y-3">
+                        <h3 className="text-[10px] font-bold text-slate-900 uppercase tracking-widest border-b border-slate-100 pb-1 mb-1">Exportinställningar</h3>
+                        <p className="text-[9px] text-slate-500 leading-tight">
+                            Filerna delas automatiskt upp för att möta FamilySearchs krav. Justera kvaliteten för att få plats med mer per fil.
                         </p>
-                        {autoSaveStatus && <span className={`text-[10px] font-bold ${autoSaveStatus === 'Kunde inte spara' ? 'text-red-500' : 'text-slate-400'}`}>{autoSaveStatus}</span>}
+                        
+                        <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-bold text-slate-600">Max Storlek:</label>
+                            <div className="flex items-center">
+                                <input 
+                                    type="number" 
+                                    min="5" max="50" step="0.5" 
+                                    value={settings.maxChunkSizeMB} 
+                                    onChange={(e) => onUpdateSettings({...settings, maxChunkSizeMB: parseFloat(e.target.value)})} 
+                                    className="w-12 text-center text-xs font-bold border border-slate-300 rounded px-1 py-0.5 focus:border-indigo-500 outline-none"
+                                />
+                                <span className="text-[10px] font-bold text-slate-400 ml-1">MB</span>
+                            </div>
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[10px] font-bold text-slate-600 block">Bildkvalitet:</label>
+                            <div className="flex bg-slate-100 rounded p-0.5">
+                                {(['low', 'medium', 'high'] as CompressionLevel[]).map(level => (
+                                    <button 
+                                        key={level} 
+                                        onClick={() => onUpdateSettings({...settings, compressionLevel: level})}
+                                        className={`flex-1 py-1 text-[9px] font-bold rounded transition-all capitalize ${settings.compressionLevel === level ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-400 hover:text-slate-600'}`}
+                                    >
+                                        {level === 'low' ? 'Låg' : level === 'medium' ? 'Medel' : 'Hög'}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
                     </div>
-                    <div className="text-[10px] text-slate-400 mt-2 truncate bg-white p-2 rounded border border-slate-200" title={`Min Enhet / Dela din historia / ${bookTitle}`}>
-                         <i className="fab fa-google-drive mr-1 text-slate-500"></i>
-                         Sökväg: <span className="font-mono text-slate-600">Dela din historia / {bookTitle}</span>
-                    </div>
-                 </>
+                 </div>
              ) : (
                  <button onClick={toggleOverlay} className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300 transition-colors">
                      <i className="fas fa-bars text-slate-600"></i>
@@ -350,7 +396,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                          <div 
                             key={chunk.id}
                             onClick={toggleOverlay}
-                            className={`w-10 h-10 mx-auto my-2 rounded-full flex items-center justify-center text-xs font-bold shadow-sm cursor-pointer hover:scale-110 transition-transform text-white ${isGreen ? 'bg-emerald-500' : isUploading ? 'bg-indigo-500 animate-pulse' : theme.bg}`}
+                            className={`w-10 h-10 mx-auto my-2 rounded-full flex items-center justify-center text-xs font-bold shadow-sm cursor-pointer hover:scale-110 transition-transform text-white ${isGreen ? theme.bg : isUploading ? 'bg-indigo-500 animate-pulse' : theme.bg}`}
                             title={chunk.title}
                          >
                              {chunk.id}
@@ -367,7 +413,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                          <div className="p-4">
                              <div className="flex justify-between items-center mb-3">
                                  <div className="flex items-center space-x-3">
-                                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-black text-white ${isGreen ? 'bg-emerald-500' : theme.bg}`}>
+                                     <span className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-black text-white ${theme.bg}`}>
                                          {chunk.id}
                                      </span>
                                      <div>
@@ -379,15 +425,15 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                                  </div>
                                  <div className="text-right">
                                      {isGreen ? (
-                                         <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full uppercase tracking-wider">
-                                             <i className="fas fa-check mr-1"></i> Sparad
+                                         <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md uppercase tracking-wider flex items-center gap-1 border border-emerald-100">
+                                             <i className="fas fa-check-circle"></i> SPARAD PÅ DRIVE
                                          </span>
                                      ) : isUploading ? (
-                                         <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-full uppercase tracking-wider animate-pulse">
-                                             <i className="fas fa-sync fa-spin mr-1"></i> Sparar
+                                         <span className="text-[9px] font-black text-indigo-600 bg-indigo-50 px-2 py-1 rounded-md uppercase tracking-wider animate-pulse flex items-center gap-1">
+                                             <i className="fas fa-sync fa-spin"></i> SPARAR...
                                          </span>
                                      ) : (
-                                         <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-full uppercase tracking-wider">
+                                         <span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md uppercase tracking-wider">
                                              Redo
                                          </span>
                                      )}
@@ -397,7 +443,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                              {/* Storage Meter */}
                              <div className="relative w-full h-3 bg-slate-100 rounded-full overflow-hidden mb-2">
                                  <div 
-                                    className={`absolute top-0 left-0 h-full transition-all duration-1000 ${isGreen ? 'bg-emerald-500' : theme.bg}`}
+                                    className={`absolute top-0 left-0 h-full transition-all duration-1000 ${theme.bg}`}
                                     style={{ width: `${percentFilled}%` }}
                                  ></div>
                              </div>
@@ -468,22 +514,45 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
          {/* LEFT: INPUT */}
          <div className="flex-1 overflow-y-auto scroll-smooth relative border-r border-slate-200 min-w-[200px]">
              <div className="p-8 pb-32">
-                <div className="flex justify-between items-center mb-8">
-                    <div className="flex items-center space-x-4 max-w-[80%]">
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+                    <div className="flex items-center space-x-4 max-w-full md:max-w-[70%]">
                         <div className="shrink-0">
-                            <AppLogo variant="phase2" className="w-20 h-20" />
+                            <AppLogo variant="phase2" className="w-16 h-16 md:w-20 md:h-20" />
                         </div>
                         <div>
                             <h2 className="text-2xl font-serif font-bold text-slate-900 leading-tight break-words whitespace-normal">Berätta kortfattat</h2>
                             <p className="text-sm text-slate-500 font-medium mt-1">Klicka och skriv</p>
                         </div>
                     </div>
-                    {activeChunkFilter !== null && (
-                        <button onClick={() => setActiveChunkFilter(null)} className="text-xs bg-slate-200 hover:bg-slate-300 px-3 py-1 rounded-full font-bold text-slate-600 shrink-0">
+                    
+                    {/* View Controls */}
+                    <div className="flex items-center bg-slate-200 rounded-lg p-1 shrink-0">
+                        <button 
+                            onClick={() => setViewMode('grid')}
+                            className={`p-2 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                            title="Rutnät"
+                        >
+                            <i className="fas fa-th-large"></i>
+                        </button>
+                        <button 
+                            onClick={() => setViewMode('list')}
+                            className={`p-2 rounded-md transition-all ${viewMode === 'list' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                            title="Lista"
+                        >
+                            <i className="fas fa-list"></i>
+                        </button>
+                    </div>
+                </div>
+
+                {/* Filter Indicator */}
+                {activeChunkFilter !== null && (
+                    <div className="mb-6 flex items-center justify-between bg-indigo-50 px-4 py-2 rounded-lg border border-indigo-100">
+                        <span className="text-sm font-bold text-indigo-700">Visar filer för Del {activeChunkFilter}</span>
+                        <button onClick={() => setActiveChunkFilter(null)} className="text-xs bg-white hover:bg-indigo-100 px-3 py-1 rounded shadow-sm font-bold text-indigo-600 transition-colors">
                             Visa alla
                         </button>
-                    )}
-                </div>
+                    </div>
+                )}
 
                 {/* Toolbar */}
                 {selectedIds.size > 0 && (
@@ -497,47 +566,80 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                     </div>
                 )}
 
-                {/* Tiles Grid */}
-                <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 select-none">
-                    {/* Add Button */}
-                    <button 
-                        onClick={() => onOpenSourceSelector(null)}
-                        className="aspect-[210/297] rounded-lg border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all group bg-white"
-                    >
-                        <div className="mb-2 transform group-hover:scale-110 transition-transform">
-                            <AppLogo variant="phase1" className="w-12 h-12" />
-                        </div>
-                        <div className="w-8 h-8 rounded-full bg-slate-100 group-hover:bg-white group-hover:shadow-md flex items-center justify-center mb-2 transition-all">
-                            <i className="fas fa-plus text-lg"></i>
-                        </div>
-                        <span className="text-sm font-bold uppercase tracking-wider text-center px-2">Lägg till<br/>minne</span>
-                    </button>
+                {/* VIEW MODE: GRID */}
+                {viewMode === 'grid' && (
+                    <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 select-none">
+                        {/* Add Button */}
+                        <button 
+                            onClick={() => onOpenSourceSelector(null)}
+                            className="aspect-[210/297] rounded-sm border-2 border-dashed border-slate-300 flex flex-col items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all group bg-white shadow-sm"
+                        >
+                            <div className="mb-2 transform group-hover:scale-110 transition-transform">
+                                <AppLogo variant="phase1" className="w-12 h-12" />
+                            </div>
+                            <div className="w-8 h-8 rounded-full bg-slate-100 group-hover:bg-white group-hover:shadow-md flex items-center justify-center mb-2 transition-all">
+                                <i className="fas fa-plus text-lg"></i>
+                            </div>
+                            <span className="text-sm font-bold uppercase tracking-wider text-center px-2">Lägg till<br/>minne</span>
+                        </button>
 
-                    {filteredItems.map((item, index) => {
-                        const originalIndex = items.findIndex(i => i.id === item.id);
-                        const chunk = getChunkForItem(item.id);
-                        // Simplified chunk info for tile
-                        const chunkInfo = chunk ? { 
-                            chunkIndex: chunk.id, 
-                            colorClass: CHUNK_THEMES[(chunk.id - 1) % CHUNK_THEMES.length].bg, 
-                            isTooLarge: false 
-                        } : undefined;
+                        {filteredItems.map((item, index) => {
+                            const originalIndex = items.findIndex(i => i.id === item.id);
+                            const chunk = getChunkForItem(item.id);
+                            const chunkInfo = chunk ? { 
+                                chunkIndex: chunk.id, 
+                                colorClass: CHUNK_THEMES[(chunk.id - 1) % CHUNK_THEMES.length].bg 
+                            } : undefined;
 
-                        return (
-                            <Tile 
-                                key={item.id} id={`tile-${item.id}`} item={item} index={originalIndex}
-                                isSelected={selectedIds.has(item.id)}
-                                onClick={(e: React.MouseEvent) => handleSelection(e, item, originalIndex)}
-                                onEdit={() => setEditingItem(item)}
-                                onSplit={() => handleSplitPdf(item, originalIndex)}
-                                onRemove={() => onUpdateItems(items.filter(i => i.id !== item.id))}
-                                onDragStart={(e: any) => handleDragStart(e, originalIndex)}
-                                onDragOver={(e: any) => handleDragOver(e, originalIndex)}
-                                chunkInfo={chunkInfo}
-                            />
-                        );
-                    })}
-                </div>
+                            return (
+                                <Tile 
+                                    key={item.id} id={`tile-${item.id}`} item={item} index={originalIndex}
+                                    isSelected={selectedIds.has(item.id)}
+                                    onClick={(e: React.MouseEvent) => handleSelection(e, item, originalIndex)}
+                                    onEdit={() => setEditingItem(item)}
+                                    onSplit={() => handleSplitPdf(item, originalIndex)}
+                                    onRemove={() => onUpdateItems(items.filter(i => i.id !== item.id))}
+                                    onDragStart={(e: any) => handleDragStart(e, originalIndex)}
+                                    onDragOver={(e: any) => handleDragOver(e, originalIndex)}
+                                    chunkInfo={chunkInfo}
+                                />
+                            );
+                        })}
+                    </div>
+                )}
+
+                {/* VIEW MODE: LIST */}
+                {viewMode === 'list' && (
+                    <div className="flex flex-col space-y-2 select-none">
+                         <button 
+                            onClick={() => onOpenSourceSelector(null)}
+                            className="w-full p-4 border-2 border-dashed border-slate-300 rounded-lg flex items-center justify-center text-slate-400 hover:text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/20 transition-all font-bold text-sm mb-4"
+                        >
+                            <i className="fas fa-plus mr-2"></i> Lägg till minne
+                        </button>
+
+                        {filteredItems.map((item, index) => {
+                            const originalIndex = items.findIndex(i => i.id === item.id);
+                            const chunk = getChunkForItem(item.id);
+                            const chunkInfo = chunk ? { 
+                                chunkIndex: chunk.id, 
+                                colorClass: CHUNK_THEMES[(chunk.id - 1) % CHUNK_THEMES.length].bg 
+                            } : undefined;
+
+                            return (
+                                <ListViewItem 
+                                    key={item.id} item={item} index={originalIndex}
+                                    isSelected={selectedIds.has(item.id)}
+                                    onClick={(e: React.MouseEvent) => handleSelection(e, item, originalIndex)}
+                                    onEdit={() => setEditingItem(item)}
+                                    chunkInfo={chunkInfo}
+                                    onDragStart={(e: any) => handleDragStart(e, originalIndex)}
+                                    onDragOver={(e: any) => handleDragOver(e, originalIndex)}
+                                />
+                            );
+                        })}
+                    </div>
+                )}
              </div>
          </div>
 
@@ -576,23 +678,83 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   );
 };
 
-// ... Tile, RichTextListEditor, EditModal, SidebarThumbnail (Unchanged)
+// --- NEW LIST VIEW COMPONENT ---
+const ListViewItem = ({ item, index, isSelected, onClick, onEdit, chunkInfo, onDragStart, onDragOver }: any) => {
+    const groupColor = stringToColor(item.id.split('-')[0] + (item.id.split('-')[1] || ''));
+    const chunkColor = chunkInfo?.colorClass || 'bg-slate-300';
+    
+    // Stats calculation
+    const originalSize = item.size || 0;
+    const processedSize = item.processedSize || originalSize;
+    const reduction = originalSize > 0 ? Math.round(((originalSize - processedSize) / originalSize) * 100) : 0;
+    const sizeStr = `${(originalSize / 1024 / 1024).toFixed(1)}MB -> ${(processedSize / 1024 / 1024).toFixed(1)}MB`;
+
+    return (
+        <div 
+            className={`flex items-center p-3 rounded-lg border bg-white shadow-sm transition-all cursor-pointer ${isSelected ? 'ring-2 ring-indigo-500 border-indigo-500' : 'border-slate-200 hover:shadow-md hover:border-indigo-300'}`}
+            style={{ borderLeft: `4px solid ${groupColor}` }}
+            onClick={onClick}
+            draggable onDragStart={onDragStart} onDragOver={onDragOver}
+        >
+            {/* Drag Handle */}
+            <div className="text-slate-300 mr-3 cursor-move hover:text-slate-500"><i className="fas fa-grip-vertical"></i></div>
+            
+            {/* Thumbnail */}
+            <div className="w-12 h-12 bg-slate-100 rounded overflow-hidden shrink-0 relative border border-slate-200">
+                {item.thumbnail || (item.type === FileType.IMAGE && item.blobUrl) ? (
+                    <img src={item.thumbnail || item.blobUrl} className="w-full h-full object-cover" />
+                ) : (
+                    <div className="flex items-center justify-center h-full text-slate-400"><i className={`fas ${item.type === FileType.PDF ? 'fa-file-pdf' : 'fa-file'} text-lg`}></i></div>
+                )}
+            </div>
+
+            {/* Content */}
+            <div className="ml-4 flex-1 min-w-0">
+                <h4 className="text-sm font-bold text-slate-800 truncate">{item.name}</h4>
+                <div className="flex items-center gap-2 mt-1">
+                    <div className={`w-2 h-2 rounded-full ${chunkColor}`}></div>
+                    <span className="text-[10px] text-slate-500 font-mono">
+                       {sizeStr} <span className="text-emerald-600 font-bold">(-{reduction}%)</span>
+                    </span>
+                </div>
+            </div>
+
+            {/* Actions */}
+            <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-2 text-slate-400 hover:text-indigo-600">
+                <i className="fas fa-pen"></i>
+            </button>
+        </div>
+    );
+};
+
+// --- UPDATED TILE COMPONENT ---
 const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove, onDragStart, onDragOver, chunkInfo }: any) => {
   const groupColor = stringToColor(item.id.split('-')[0] + (item.id.split('-')[1] || ''));
   const showSplit = (item.type === FileType.PDF || item.type === FileType.GOOGLE_DOC) && (item.pageCount === undefined || item.pageCount > 1);
-  const chunkColor = chunkInfo?.colorClass || 'bg-slate-300'; // Default gray if not chunked yet
-  const displaySizeMB = item.processedSize ? (item.processedSize / (1024*1024)).toFixed(2) : ((item.size || 0) / (1024*1024)).toFixed(2);
+  const chunkColor = chunkInfo?.colorClass || 'bg-slate-300'; 
+  
+  // Clean size display
+  const originalSize = item.size || 0;
+  const processedSize = item.processedSize || originalSize;
+  // If processed is significantly smaller, show stats
+  const reduction = originalSize > 0 ? Math.round(((originalSize - processedSize) / originalSize) * 100) : 0;
+  const showStats = item.processedSize && reduction > 5;
+
+  const displaySize = showStats 
+      ? `${(originalSize/1024/1024).toFixed(1)}MB -> ${(processedSize/1024/1024).toFixed(1)}MB (-${reduction}%)`
+      : `${(originalSize/1024/1024).toFixed(1)} MB`;
+
   const isEdited = item.pageMeta && Object.keys(item.pageMeta).length > 0;
-  const isCached = !!item.processedBuffer;
 
   return (
     <div id={id} className={`group relative aspect-[210/297] bg-white rounded-sm shadow-sm transition-all cursor-pointer transform ${isSelected ? 'ring-4 ring-indigo-500 scale-105 z-10' : 'hover:shadow-xl hover:-translate-y-1'}`} style={{ borderBottom: `4px solid ${groupColor}` }} draggable onDragStart={onDragStart} onDragOver={onDragOver} onClick={onClick}>
-       <div className="absolute top-2 left-2 right-2 bottom-20 bg-slate-100 overflow-hidden flex items-center justify-center border border-slate-100 relative">
-          <div className="w-full h-full relative overflow-hidden bg-white">
+       {/* Inner container with minimal padding to maximize image size */}
+       <div className="absolute inset-0 bottom-16 bg-slate-50 overflow-hidden flex items-center justify-center">
+          <div className="w-full h-full relative">
              {item.thumbnail ? (
-                 <img src={item.thumbnail} className="w-full h-full object-cover" loading="lazy" />
+                 <img src={item.thumbnail} className="w-full h-full object-contain" loading="lazy" />
              ) : item.type === FileType.IMAGE && item.blobUrl ? (
-                 <img src={item.blobUrl} className="w-full h-full object-cover" loading="lazy" />
+                 <img src={item.blobUrl} className="w-full h-full object-contain" loading="lazy" />
              ) : (item.type === FileType.PDF && item.blobUrl) ? (
                  <iframe src={`${item.blobUrl}#toolbar=0&navpanes=0&scrollbar=0&view=Fit`} className="w-full h-full absolute inset-0 border-none pointer-events-none" title="Preview" scrolling="no" loading="lazy" />
              ) : (
@@ -601,30 +763,39 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
                     {item.type === FileType.PDF && <p className="text-[10px] text-slate-400">PDF-dokument</p>}
                  </div>
              )}
-             <div className="absolute inset-0 bg-transparent z-10"></div>
+             {/* Gradient Overlay for Text Readability at bottom of image area */}
+             <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-black/20 to-transparent pointer-events-none"></div>
           </div>
-          {/* Chunk Indicator Dot */}
+          
+          {/* Chunk Dot */}
           <div className="absolute top-2 left-2 flex flex-col gap-1 items-start z-20 pointer-events-none">
-              <div className={`w-3 h-3 rounded-full shadow-sm ${chunkColor}`}></div>
+              <div className={`w-3 h-3 rounded-full shadow-sm border border-white/50 ${chunkColor}`}></div>
           </div>
+
+          {/* Action Buttons */}
           <div className={`absolute top-2 right-2 flex flex-col gap-2 transition-opacity z-30 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
               <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="w-8 h-8 bg-indigo-600 text-white rounded-full shadow-md flex items-center justify-center hover:bg-indigo-700"><i className="fas fa-pen text-xs"></i></button>
               {showSplit && (<button onClick={(e) => { e.stopPropagation(); onSplit(); }} className="w-8 h-8 bg-white rounded-full text-slate-400 hover:text-indigo-600 shadow-md flex items-center justify-center"><i className="fas fa-layer-group text-xs"></i></button>)}
                <button onClick={(e) => { e.stopPropagation(); onRemove(); }} className="w-8 h-8 bg-white rounded-full text-slate-400 hover:text-red-500 shadow-md flex items-center justify-center"><i className="fas fa-trash-alt text-xs"></i></button>
           </div>
-          <div className="absolute bottom-0 left-0 right-0 p-1.5 flex justify-between items-end bg-gradient-to-t from-black/60 to-transparent z-20 pointer-events-none">
-                <div className="flex gap-1"><span className="bg-black/40 backdrop-blur-sm text-white px-1.5 py-0.5 rounded text-[8px] font-mono border border-white/10">{displaySizeMB} MB</span>{isCached && (<span className="bg-emerald-500/90 text-white px-1.5 py-0.5 text-[8px] font-bold rounded shadow-sm flex items-center"><i className="fas fa-bolt"></i></span>)}</div>
-                <div className="flex gap-1">{isEdited && (<span className="bg-indigo-600/90 text-white px-1.5 py-0.5 text-[8px] font-bold uppercase rounded shadow-sm">Redigerad</span>)}{(item.type === FileType.PDF || item.type === FileType.GOOGLE_DOC) && item.pageCount && item.pageCount > 1 && (<span className="bg-slate-800/80 backdrop-blur text-white px-1.5 py-0.5 rounded text-[8px] font-bold shadow-sm">{item.pageCount} sid</span>)}</div>
-          </div>
        </div>
-       <div className="absolute bottom-0 left-0 right-0 h-20 px-3 py-2 bg-white">
-          <p className="text-[10px] font-bold text-slate-400 uppercase truncate mb-1">{item.name}</p>
-          <div className="text-[9px] leading-tight text-slate-600 line-clamp-3 font-serif italic opacity-80">{item.description || "Ingen beskrivning..."}</div>
+
+       {/* Footer Area */}
+       <div className="absolute bottom-0 left-0 right-0 h-16 px-3 py-2 bg-white border-t border-slate-100 flex flex-col justify-between">
+          <div>
+            <p className="text-[10px] font-bold text-slate-700 uppercase truncate mb-0.5">{item.name}</p>
+            <div className="text-[9px] leading-tight text-slate-500 line-clamp-1 font-serif italic opacity-80">{item.description || "Ingen beskrivning..."}</div>
+          </div>
+          <div className="flex justify-between items-end mt-1">
+             <span className="text-[8px] font-mono text-slate-400 truncate max-w-[70%]">{displaySize}</span>
+             {isEdited && <span className="bg-indigo-50 text-indigo-600 px-1.5 py-0.5 text-[8px] font-bold uppercase rounded border border-indigo-100">Redigerad</span>}
+          </div>
        </div>
     </div>
   );
 };
 
+// ... RichTextListEditor, EditModal, SidebarThumbnail remain mostly unchanged ...
 const RichTextListEditor = ({ lines, onChange, onFocusLine, focusedLineId }: { lines: RichTextLine[], onChange: (l: RichTextLine[]) => void, onFocusLine: (id: string | null) => void, focusedLineId: string | null }) => {
     const handleTextChange = (id: string, newText: string) => onChange(lines.map(l => l.id === id ? { ...l, text: newText } : l));
     const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
