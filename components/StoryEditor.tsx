@@ -147,7 +147,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
         while (nextCursor < items.length) {
              const item = items[nextCursor];
-             setOptimizingStatus(`Del ${currentChunkId}: Förbereder ${item.name}...`);
+             setOptimizingStatus(`Del ${currentChunkId}: Optimerar för FamilySearch-minnen...`);
              let itemSize = item.processedSize;
              if (!item.processedBuffer || item.compressionLevelUsed !== settings.compressionLevel) {
                  try {
@@ -162,7 +162,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
              if (estimatedAccumulator < VERIFY_THRESHOLD_BYTES) {
                  nextCursor++; await new Promise(r => setTimeout(r, 0)); continue;
              }
-             setOptimizingStatus(`Del ${currentChunkId}: Verifierar exakt storlek...`);
+             setOptimizingStatus(`Del ${currentChunkId}: Kontrollerar FamilySearch storleksgräns...`);
              try {
                  const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel);
                  const realSize = pdfBytes.byteLength;
@@ -181,7 +181,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
         if (!isCancelled && currentBatch.length > 0) {
             const newChunk = { id: currentChunkId, items: currentBatch, sizeBytes: finalBatchSizeBytes || estimatedAccumulator, isOptimized: true, isUploading: false, isSynced: false, title: `${bookTitle} (Del ${currentChunkId})` };
             setChunks(prev => [...prev, newChunk]);
-            addLog(`Del ${currentChunkId} klar: ${currentBatch.length} objekt, ${(newChunk.sizeBytes / 1024 / 1024).toFixed(1)}MB`);
+            addLog(`Del ${currentChunkId} klar för FamilySearch: ${currentBatch.length} objekt, ${(newChunk.sizeBytes / 1024 / 1024).toFixed(1)}MB`);
             setOptimizationCursor(nextCursor); setOptimizingStatus('');
         }
     };
@@ -258,11 +258,83 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                     <div>
                         <h2 className="text-xl font-serif font-bold text-slate-900 leading-tight">Filer till FamilySearch</h2>
                         
+                        {/* EXPANDABLE SETTINGS PANEL - MOVED HERE */}
+                        <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm mt-3">
+                            <div 
+                                className="p-3 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors bg-white"
+                                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
+                            >
+                                <h3 className="text-[10px] font-bold text-indigo-700 uppercase tracking-widest flex items-center gap-2">
+                                    <i className="fas fa-info-circle"></i>
+                                    Så här fungerar exporten
+                                </h3>
+                                <i className={`fas fa-chevron-down text-slate-400 text-xs transition-transform duration-200 ${isSettingsOpen ? 'rotate-180' : ''}`}></i>
+                            </div>
+                            
+                            {isSettingsOpen && (
+                                <div className="p-3 pt-0 border-t border-slate-50 space-y-4 bg-slate-50/50 animate-in slide-in-from-top-2">
+                                    {/* Explanation Text */}
+                                    <div className="bg-indigo-50/50 p-2 rounded border border-indigo-100 text-[10px] text-slate-600 leading-relaxed">
+                                        FamilySearch har en gräns på 15 MB per fil för "Minnen". Appen analyserar och delar automatiskt upp din bok i flera delar (PDF-filer) så att de garanterat går att ladda upp. Du kan justera bildkvaliteten nedan för att få plats med fler sidor per fil.
+                                    </div>
+
+                                    {/* Drive Path */}
+                                    <div>
+                                        <label className="text-[9px] font-bold text-slate-500 block mb-1">Mapp på Drive</label>
+                                        <div className="text-[10px] bg-white p-2 rounded border border-slate-200 flex items-center shadow-sm" title={`Min Enhet / Dela din historia / ${bookTitle}`}>
+                                            <i className="fab fa-google-drive mr-2 text-slate-500 shrink-0"></i>
+                                            <div className="truncate font-mono text-slate-600">
+                                                <span className="opacity-50">.../</span>{bookTitle}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-700 flex justify-between">
+                                            <span>Brytpunkt för uppdelning (MB):</span>
+                                            <span className="text-slate-400">{settings.maxChunkSizeMB} MB</span>
+                                        </label>
+                                        <input 
+                                            type="range" 
+                                            min="5" max="50" step="0.5" 
+                                            value={settings.maxChunkSizeMB} 
+                                            onChange={(e) => onUpdateSettings({...settings, maxChunkSizeMB: parseFloat(e.target.value)})} 
+                                            className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 mt-2"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-700 block mb-2">Bildkvalitet på dokument</label>
+                                        <div className="flex bg-slate-200 p-1 rounded-lg">
+                                            {(['low', 'medium', 'high'] as CompressionLevel[]).map(level => {
+                                                const map = {
+                                                    'low': { label: 'Hög', tooltip: 'Låg komprimering (Större filer)' },
+                                                    'medium': { label: 'Medel', tooltip: 'Balanserad' },
+                                                    'high': { label: 'Låg', tooltip: 'Hög komprimering (Mindre filer)' }
+                                                };
+                                                const isActive = settings.compressionLevel === level;
+                                                return (
+                                                    <button 
+                                                        key={level} 
+                                                        title={map[level].tooltip}
+                                                        onClick={() => onUpdateSettings({...settings, compressionLevel: level})}
+                                                        className={`flex-1 py-1.5 text-[9px] font-bold rounded-md transition-all ${isActive ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                                    >
+                                                        {map[level].label}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
                         {/* Status Line */}
-                        <div className="flex justify-between items-center mt-1 relative">
+                        <div className="flex justify-between items-center mt-3 relative">
                             <div className="flex items-center space-x-1 cursor-pointer hover:bg-slate-200 rounded px-1 -ml-1 transition-colors" onClick={() => setShowStatusLog(!showStatusLog)}>
                                 <p className="text-[10px] text-slate-600 font-bold">
-                                    {optimizingStatus ? <span className="text-amber-600 animate-pulse"><i className="fas fa-circle-notch fa-spin mr-1"></i> {optimizingStatus}</span> : 'Klar att spara och dela'}
+                                    {optimizingStatus ? <span className="text-amber-600 animate-pulse"><i className="fas fa-circle-notch fa-spin mr-1"></i> {optimizingStatus}</span> : 'Redo för export'}
                                 </p>
                                 <i className={`fas fa-chevron-${showStatusLog ? 'up' : 'down'} text-[8px] text-slate-400`}></i>
                             </div>
@@ -278,79 +350,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                                 </div>
                             )}
                         </div>
-                    </div>
-
-                    {/* EXPANDABLE SETTINGS PANEL */}
-                    <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm">
-                        <div 
-                            className="p-3 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors bg-white"
-                            onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                        >
-                            <h3 className="text-[10px] font-bold text-slate-900 uppercase tracking-widest">Exportinställningar</h3>
-                            <i className={`fas fa-chevron-down text-slate-400 text-xs transition-transform duration-200 ${isSettingsOpen ? 'rotate-180' : ''}`}></i>
-                        </div>
-                        
-                        {isSettingsOpen && (
-                            <div className="p-3 pt-0 border-t border-slate-50 space-y-4 bg-slate-50/50 animate-in slide-in-from-top-2">
-                                {/* Drive Path moved here */}
-                                <div>
-                                    <label className="text-[9px] font-bold text-slate-500 block mb-1">Mapp på Drive</label>
-                                    <div className="text-[10px] bg-white p-2 rounded border border-slate-200 flex items-center shadow-sm" title={`Min Enhet / Dela din historia / ${bookTitle}`}>
-                                        <i className="fab fa-google-drive mr-2 text-slate-500 shrink-0"></i>
-                                        <div className="truncate font-mono text-slate-600">
-                                            <span className="opacity-50">.../</span>{bookTitle}
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label className="text-[10px] font-bold text-slate-700 flex justify-between">
-                                        <span>Dela upp filer automatiskt vid (MB):</span>
-                                        <span className="text-slate-400">{settings.maxChunkSizeMB} MB</span>
-                                    </label>
-                                    <input 
-                                        type="range" 
-                                        min="5" max="50" step="0.5" 
-                                        value={settings.maxChunkSizeMB} 
-                                        onChange={(e) => onUpdateSettings({...settings, maxChunkSizeMB: parseFloat(e.target.value)})} 
-                                        className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 mt-2"
-                                    />
-                                    <p className="text-[9px] text-slate-500 mt-1 italic leading-tight">
-                                        FamilySearch tillåter max 15MB per fil. Appen delar upp boken automatiskt för att möta detta krav.
-                                    </p>
-                                </div>
-
-                                <div>
-                                    <label className="text-[10px] font-bold text-slate-700 block mb-2">Bildkvalitet på dokument</label>
-                                    <div className="flex bg-slate-200 p-1 rounded-lg">
-                                        {(['low', 'medium', 'high'] as CompressionLevel[]).map(level => {
-                                            // Mapping: Low Compression = High Quality. High Compression = Low Quality.
-                                            const map = {
-                                                'low': { label: 'Hög', tooltip: 'Låg komprimering (Större filer)' },
-                                                'medium': { label: 'Medel', tooltip: 'Balanserad' },
-                                                'high': { label: 'Låg', tooltip: 'Hög komprimering (Mindre filer)' }
-                                            };
-                                            const isActive = settings.compressionLevel === level;
-                                            return (
-                                                <button 
-                                                    key={level} 
-                                                    title={map[level].tooltip}
-                                                    onClick={() => onUpdateSettings({...settings, compressionLevel: level})}
-                                                    className={`flex-1 py-1.5 text-[9px] font-bold rounded-md transition-all ${isActive ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                                                >
-                                                    {map[level].label}
-                                                </button>
-                                            );
-                                        })}
-                                    </div>
-                                    <div className="mt-2 bg-blue-50 p-2 rounded border border-blue-100">
-                                        <p className="text-[9px] text-blue-800 leading-relaxed">
-                                            <strong>Tips:</strong> Använd 'Låg' kvalitet för att arkivera hundratals dokument i en fil. För viktiga foton, spara dem separat som PNG för maximal kvalitet.
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-                        )}
                     </div>
                  </div>
              ) : (
@@ -660,18 +659,17 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
           onClose={() => setEditingItem(null)} 
           onUpdate={handleUpdateItem}
           settings={settings}
+          driveFolderId={currentBook.driveFolderId} // Pass drive folder ID
         />
       )}
     </>
   );
 };
 
-// ... NEW LIST VIEW COMPONENT ...
+// ... NEW LIST VIEW COMPONENT (Unchanged) ...
 const ListViewItem = ({ item, index, isSelected, onClick, onEdit, chunkInfo, onDragStart, onDragOver }: any) => {
     const groupColor = stringToColor(item.id.split('-')[0] + (item.id.split('-')[1] || ''));
     const chunkColor = chunkInfo?.colorClass || 'bg-slate-300';
-    
-    // Stats calculation
     const originalSize = item.size || 0;
     const processedSize = item.processedSize || originalSize;
     const reduction = originalSize > 0 ? Math.round(((originalSize - processedSize) / originalSize) * 100) : 0;
@@ -684,10 +682,7 @@ const ListViewItem = ({ item, index, isSelected, onClick, onEdit, chunkInfo, onD
             onClick={onClick}
             draggable onDragStart={onDragStart} onDragOver={onDragOver}
         >
-            {/* Drag Handle */}
             <div className="text-slate-300 mr-3 cursor-move hover:text-slate-500"><i className="fas fa-grip-vertical"></i></div>
-            
-            {/* Thumbnail */}
             <div className="w-12 h-12 bg-slate-100 rounded overflow-hidden shrink-0 relative border border-slate-200">
                 {item.thumbnail || (item.type === FileType.IMAGE && item.blobUrl) ? (
                     <img src={item.thumbnail || item.blobUrl} className="w-full h-full object-cover" />
@@ -695,8 +690,6 @@ const ListViewItem = ({ item, index, isSelected, onClick, onEdit, chunkInfo, onD
                     <div className="flex items-center justify-center h-full text-slate-400"><i className={`fas ${item.type === FileType.PDF ? 'fa-file-pdf' : 'fa-file'} text-lg`}></i></div>
                 )}
             </div>
-
-            {/* Content */}
             <div className="ml-4 flex-1 min-w-0">
                 <h4 className="text-sm font-bold text-slate-800 truncate">{item.name}</h4>
                 <div className="flex items-center gap-2 mt-1">
@@ -706,8 +699,6 @@ const ListViewItem = ({ item, index, isSelected, onClick, onEdit, chunkInfo, onD
                     </span>
                 </div>
             </div>
-
-            {/* Actions */}
             <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-2 text-slate-400 hover:text-indigo-600">
                 <i className="fas fa-pen"></i>
             </button>
@@ -715,21 +706,18 @@ const ListViewItem = ({ item, index, isSelected, onClick, onEdit, chunkInfo, onD
     );
 };
 
-// ... UPDATED TILE COMPONENT ...
+// ... UPDATED TILE COMPONENT (Unchanged) ...
 const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove, onDragStart, onDragOver, chunkInfo }: any) => {
   const groupColor = stringToColor(item.id.split('-')[0] + (item.id.split('-')[1] || ''));
   const showSplit = (item.type === FileType.PDF || item.type === FileType.GOOGLE_DOC) && (item.pageCount === undefined || item.pageCount > 1);
   const chunkColor = chunkInfo?.colorClass || 'bg-slate-300'; 
-  
   const originalSize = item.size || 0;
   const processedSize = item.processedSize || originalSize;
   const reduction = originalSize > 0 ? Math.round(((originalSize - processedSize) / originalSize) * 100) : 0;
   const showStats = item.processedSize && reduction > 5;
-
   const displaySize = showStats 
       ? `${(originalSize/1024/1024).toFixed(1)}MB -> ${(processedSize/1024/1024).toFixed(1)}MB (-${reduction}%)`
       : `${(originalSize/1024/1024).toFixed(1)} MB`;
-
   const isEdited = item.pageMeta && Object.keys(item.pageMeta).length > 0;
 
   return (
@@ -750,18 +738,15 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
              )}
              <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-black/20 to-transparent pointer-events-none"></div>
           </div>
-          
           <div className="absolute top-2 left-2 flex flex-col gap-1 items-start z-20 pointer-events-none">
               <div className={`w-3 h-3 rounded-full shadow-sm border border-white/50 ${chunkColor}`}></div>
           </div>
-
           <div className={`absolute top-2 right-2 flex flex-col gap-2 transition-opacity z-30 ${isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
               <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="w-8 h-8 bg-indigo-600 text-white rounded-full shadow-md flex items-center justify-center hover:bg-indigo-700"><i className="fas fa-pen text-xs"></i></button>
               {showSplit && (<button onClick={(e) => { e.stopPropagation(); onSplit(); }} className="w-8 h-8 bg-white rounded-full text-slate-400 hover:text-indigo-600 shadow-md flex items-center justify-center"><i className="fas fa-layer-group text-xs"></i></button>)}
                <button onClick={(e) => { e.stopPropagation(); onRemove(); }} className="w-8 h-8 bg-white rounded-full text-slate-400 hover:text-red-500 shadow-md flex items-center justify-center"><i className="fas fa-trash-alt text-xs"></i></button>
           </div>
        </div>
-
        <div className="absolute bottom-0 left-0 right-0 h-16 px-3 py-2 bg-white border-t border-slate-100 flex flex-col justify-between">
           <div>
             <p className="text-[10px] font-bold text-slate-700 uppercase truncate mb-0.5">{item.name}</p>
@@ -776,7 +761,6 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
   );
 };
 
-// ... RichTextListEditor, EditModal, SidebarThumbnail (Unchanged)
 const RichTextListEditor = ({ lines, onChange, onFocusLine, focusedLineId }: { lines: RichTextLine[], onChange: (l: RichTextLine[]) => void, onFocusLine: (id: string | null) => void, focusedLineId: string | null }) => {
     const handleTextChange = (id: string, newText: string) => onChange(lines.map(l => l.id === id ? { ...l, text: newText } : l));
     const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
@@ -796,7 +780,7 @@ const RichTextListEditor = ({ lines, onChange, onFocusLine, focusedLineId }: { l
         </div>))}</div>);
 };
 
-const EditModal = ({ item, accessToken, onClose, onUpdate, settings }: any) => {
+const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolderId }: any) => {
     const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
     const [pageMeta, setPageMeta] = useState<Record<number, PageMetadata>>(item.pageMeta || {});
     const [activePageIndex, setActivePageIndex] = useState(0);
@@ -808,6 +792,7 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings }: any) => {
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const mainCanvasRef = useRef<HTMLCanvasElement>(null);
     const [isLoadingPreview, setIsLoadingPreview] = useState(true);
+    const [isSavingImage, setIsSavingImage] = useState(false);
 
     useEffect(() => {
         const init = async () => {
@@ -868,9 +853,29 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings }: any) => {
 
     const getCurrentMeta = () => pageMeta[activePageIndex] || { headerLines: [], footerLines: [] };
     const updateCurrentMeta = (updates: Partial<PageMetadata>) => setPageMeta(prev => ({ ...prev, [activePageIndex]: { ...(prev[activePageIndex] || { headerLines: [], footerLines: [] }), ...updates } }));
+    
+    // Updated PNG Save Logic
     const handleCopyPageToPng = async () => {
-        if (!previewBlob) return;
-        try { const pngBlob = await extractHighQualityImage(previewBlob, activePageIndex); const url = URL.createObjectURL(pngBlob); const a = document.createElement('a'); a.href = url; a.download = `${item.name.replace(/\.[^/.]+$/, "")}_Sida${activePageIndex + 1}.png`; a.click(); } catch (e) { alert("Kunde inte spara sidan som bild."); }
+        if (!previewBlob || !driveFolderId) {
+            alert("Kan inte spara bilden (saknar mapp eller data).");
+            return;
+        }
+        
+        const defaultName = `${item.name.replace(/\.[^/.]+$/, "")}_Sida${activePageIndex + 1}.png`;
+        const filename = prompt("Vad ska bilden heta på Google Drive?", defaultName);
+        if (!filename) return;
+
+        setIsSavingImage(true);
+        try { 
+            const pngBlob = await extractHighQualityImage(previewBlob, activePageIndex); 
+            await uploadToDrive(accessToken, driveFolderId, filename, pngBlob, 'image/png');
+            alert(`Bilden "${filename}" har sparats i bokens mapp på Google Drive.\n\nDu kan nu ladda upp den manuellt till "Minnen" på FamilySearch för att kunna tagga ansikten (vilket inte går med PDF-filer).`);
+        } catch (e) { 
+            alert("Kunde inte spara bilden till Drive."); 
+            console.error(e);
+        } finally {
+            setIsSavingImage(false);
+        }
     };
 
     const getActiveConfig = () => { const meta = getCurrentMeta(); const lines = activeSection === 'header' ? meta.headerLines : meta.footerLines; const line = lines.find(l => l.id === focusedLineId); return line?.config || (activeSection === 'header' ? DEFAULT_TEXT_CONFIG : DEFAULT_FOOTER_CONFIG); };
@@ -882,7 +887,13 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings }: any) => {
             <div className="bg-slate-800 text-white h-14 flex items-center justify-between px-4 border-b border-slate-700 shrink-0">
                 <div className="flex items-center space-x-4"><button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="text-slate-300 hover:text-white"><i className="fas fa-bars text-lg"></i></button><span className="font-bold text-sm truncate max-w-[200px]">{item.name}</span></div>
                 <div className="flex items-center space-x-2"><span className="text-xs text-slate-400 mr-2">{activePageIndex + 1} / {totalPages}</span><button onClick={() => setActivePageIndex(Math.max(0, activePageIndex - 1))} disabled={activePageIndex === 0} className="w-8 h-8 rounded hover:bg-slate-700 disabled:opacity-30"><i className="fas fa-chevron-left"></i></button><button onClick={() => setActivePageIndex(Math.min(totalPages - 1, activePageIndex + 1))} disabled={activePageIndex === totalPages - 1} className="w-8 h-8 rounded hover:bg-slate-700 disabled:opacity-30"><i className="fas fa-chevron-right"></i></button></div>
-                <div className="flex items-center space-x-3"><button onClick={handleCopyPageToPng} className="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center space-x-2 shadow-lg"><i className="fas fa-file-image"></i><span>Spara bild (PNG)</span></button><button onClick={onClose} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-1.5 rounded text-xs font-bold transition-colors">Klar</button></div>
+                <div className="flex items-center space-x-3">
+                    <button onClick={handleCopyPageToPng} disabled={isSavingImage} className="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center space-x-2 shadow-lg disabled:opacity-50">
+                        {isSavingImage ? <i className="fas fa-circle-notch fa-spin"></i> : <i className="fas fa-save"></i>}
+                        <span>{isSavingImage ? 'Sparar...' : 'Spara bild till Drive'}</span>
+                    </button>
+                    <button onClick={onClose} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-1.5 rounded text-xs font-bold transition-colors">Klar</button>
+                </div>
             </div>
             <div className="flex-1 flex overflow-hidden">
                 {isSidebarOpen && (<div className="w-48 bg-[#222] border-r border-slate-700 flex flex-col overflow-y-auto custom-scrollbar shrink-0"><div className="p-4 space-y-4">{Array.from({ length: totalPages }).map((_, idx) => (<div key={idx} onClick={() => setActivePageIndex(idx)} className={`cursor-pointer group relative flex flex-col items-center ${activePageIndex === idx ? 'opacity-100' : 'opacity-60 hover:opacity-100'}`}><div className={`w-full aspect-[210/297] bg-white rounded-sm overflow-hidden relative shadow-sm transition-all ${activePageIndex === idx ? 'ring-2 ring-indigo-500' : ''}`}><SidebarThumbnail pdfDocProxy={pdfDocProxy} pageIndex={idx} item={item} /></div><span className="text-[10px] text-slate-400 mt-1">{idx + 1}</span></div>))}</div></div>)}
