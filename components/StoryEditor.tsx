@@ -523,6 +523,18 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
           }
       }
 
+      // INTELLIGENT GAP FILLING:
+      // If we found valid chunks, check the *last* valid chunk.
+      // If it hasn't been synced to Drive yet, we discard it from the "valid" list.
+      // Why? Because new items might fit into it! We want to re-optimize it.
+      if (validChunks.length > 0 && !validChunks[validChunks.length - 1].isSynced) {
+          const lastChunk = validChunks.pop();
+          if (lastChunk) {
+              itemIndex -= lastChunk.items.length; // Rewind the cursor
+              if (itemIndex < 0) itemIndex = 0;
+          }
+      }
+
       // Update state if we found invalid chunks or if cursor needs adjustment
       if (mismatchFound || validChunks.length < chunks.length) {
           setChunks(validChunks);
@@ -710,9 +722,100 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   // --- HANDLERS (Drag, Select, Split, Merge, Update) ---
   const handleDragStart = (e: React.DragEvent, index: number) => { setDraggedIndex(index); e.dataTransfer.effectAllowed = "move"; };
   const handleDragOver = (e: React.DragEvent, index: number) => { e.preventDefault(); if (draggedIndex === null || draggedIndex === index) return; const newItems = [...items]; const item = newItems[draggedIndex]; newItems.splice(draggedIndex, 1); newItems.splice(index, 0, item); onUpdateItems(newItems); setDraggedIndex(index); };
-  const handleSelection = (e: React.MouseEvent, item: DriveFile, index: number) => { e.stopPropagation(); const newSelection = new Set(selectedIds); if (e.shiftKey && lastSelectedId) { const lastIndex = items.findIndex(i => i.id === lastSelectedId); const start = Math.min(lastIndex, index); const end = Math.max(lastIndex, index); if (!e.metaKey && !e.ctrlKey) newSelection.clear(); for (let i = start; i <= end; i++) { newSelection.add(items[i].id); } } else if (e.metaKey || e.ctrlKey) { if (newSelection.has(item.id)) newSelection.delete(item.id); else { newSelection.add(item.id); setLastSelectedId(item.id); } } else { if (!newSelection.has(item.id) || newSelection.size > 1) { newSelection.clear(); newSelection.add(item.id); setLastSelectedId(item.id); } else { setEditingItem(item); } } setSelectedIds(newSelection); };
+  
+  const handleSelection = (e: React.MouseEvent, item: DriveFile, index: number) => { 
+      e.stopPropagation(); 
+      if (!items.find(i => i.id === item.id)) return; // Safety check
+
+      const newSelection = new Set(selectedIds); 
+      if (e.shiftKey && lastSelectedId) { 
+          const lastIndex = items.findIndex(i => i.id === lastSelectedId); 
+          const start = Math.min(lastIndex, index); 
+          const end = Math.max(lastIndex, index); 
+          if (!e.metaKey && !e.ctrlKey) newSelection.clear(); 
+          for (let i = start; i <= end; i++) { newSelection.add(items[i].id); } 
+      } else if (e.metaKey || e.ctrlKey) { 
+          if (newSelection.has(item.id)) newSelection.delete(item.id); 
+          else { newSelection.add(item.id); setLastSelectedId(item.id); } 
+      } else { 
+          if (!newSelection.has(item.id) || newSelection.size > 1) { newSelection.clear(); newSelection.add(item.id); setLastSelectedId(item.id); } 
+          else { setEditingItem(item); } 
+      } 
+      setSelectedIds(newSelection); 
+  };
+
   const handleSplitPdf = async (file: DriveFile, index: number) => { if (!confirm("Detta kommer dela upp PDF-filen i lösa sidor. Vill du fortsätta?")) return; setIsProcessing(true); try { const { buffer } = await processFileForCache(file, accessToken, 'medium'); const blob = new Blob([buffer as any], { type: 'application/pdf' }); const pages = await splitPdfIntoPages(blob, file.name); const newItems = [...items]; newItems.splice(index, 1, ...pages); onUpdateItems(newItems); setSelectedIds(new Set()); } catch (e) { console.error(e); alert("Kunde inte dela upp filen."); } finally { setIsProcessing(false); } };
-  const handleMergeItems = async () => { if (selectedIds.size < 2) return; if (!confirm(`Vill du slå ihop ${selectedIds.size} filer?`)) return; setIsProcessing(true); try { const itemsToMerge = items.filter(i => selectedIds.has(i.id)); const firstIndex = items.findIndex(i => i.id === itemsToMerge[0].id); const mergedBlob = await mergeFilesToPdf(itemsToMerge, accessToken, settings.compressionLevel); const mergedUrl = URL.createObjectURL(mergedBlob); const count = await getPdfPageCount(mergedBlob); const thumbUrl = await generatePageThumbnail(mergedBlob, 0); const newItem: DriveFile = { id: `merged-${Date.now()}`, name: itemsToMerge[0].name + " (Samlad)", type: FileType.PDF, size: mergedBlob.size, modifiedTime: new Date().toISOString(), blobUrl: mergedUrl, isLocal: true, pageCount: count, pageMeta: {}, thumbnail: thumbUrl }; const newItems = [...items]; const remainingItems = newItems.filter(i => !selectedIds.has(i.id)); remainingItems.splice(firstIndex, 0, newItem); onUpdateItems(remainingItems); setSelectedIds(new Set([newItem.id])); setLastSelectedId(newItem.id); } catch (e) { alert("Kunde inte slå ihop filerna."); } finally { setIsProcessing(false); } };
+  
+  const handleMergeItems = async () => { 
+      if (selectedIds.size < 2) return; 
+      if (!confirm(`Vill du slå ihop ${selectedIds.size} filer?`)) return; 
+      
+      setIsProcessing(true); 
+      // Clear selection immediately to prevent stale state issues during async operation
+      setSelectedIds(new Set());
+
+      try { 
+          const itemsToMerge = items.filter(i => selectedIds.has(i.id)); 
+          const firstIndex = items.findIndex(i => i.id === itemsToMerge[0].id); 
+          
+          const mergedBlob = await mergeFilesToPdf(itemsToMerge, accessToken, settings.compressionLevel); 
+          const mergedUrl = URL.createObjectURL(mergedBlob); 
+          const count = await getPdfPageCount(mergedBlob); 
+          const thumbUrl = await generatePageThumbnail(mergedBlob, 0); 
+          
+          const newItemId = `merged-${Date.now()}`;
+          const newItem: DriveFile = { 
+              id: newItemId, 
+              name: itemsToMerge[0].name + " (Samlad)", 
+              type: FileType.PDF, 
+              size: mergedBlob.size, 
+              modifiedTime: new Date().toISOString(), 
+              blobUrl: mergedUrl, 
+              isLocal: true, 
+              pageCount: count, 
+              pageMeta: {}, 
+              thumbnail: thumbUrl 
+          }; 
+          
+          const newItems = [...items]; 
+          const remainingItems = newItems.filter(i => !selectedIds.has(i.id)); 
+          
+          // Determine insert position (careful with indices after filter)
+          // Easiest is to filter out then splice in at firstIndex
+          // Since remainingItems doesn't have the removed ones, the index might shift if we used indices.
+          // Strategy: remove selected from array, then insert at firstIndex.
+          // Wait, 'remainingItems' is missing the items we want to replace.
+          // 'firstIndex' is the index in the ORIGINAL array.
+          // We need to find where to insert in 'remainingItems'.
+          
+          // Simpler approach: Map over original items, replace first match with newItem, filter out others.
+          let inserted = false;
+          const finalItems = items.reduce((acc: DriveFile[], item) => {
+              if (selectedIds.has(item.id)) {
+                  if (!inserted && item.id === itemsToMerge[0].id) {
+                      acc.push(newItem);
+                      inserted = true;
+                  }
+                  // Skip (remove)
+              } else {
+                  acc.push(item);
+              }
+              return acc;
+          }, []);
+
+          onUpdateItems(finalItems); 
+          
+          // Re-select the new single item
+          setSelectedIds(new Set([newItemId])); 
+          setLastSelectedId(newItemId); 
+      } catch (e) { 
+          alert("Kunde inte slå ihop filerna."); 
+          console.error(e);
+      } finally { 
+          setIsProcessing(false); 
+      } 
+  };
+
   const handleUpdateItem = (updates: Partial<DriveFile>) => { if (!editingItem) return; const updated = { ...editingItem, ...updates }; setEditingItem(updated); onUpdateItems(items.map(i => i.id === updated.id ? updated : i)); };
   const handleInsertAfterSelection = () => { const indexes = items.map((item, idx) => selectedIds.has(item.id) ? idx : -1).filter(i => i !== -1); const maxIndex = Math.max(...indexes); if (maxIndex !== -1) onOpenSourceSelector(maxIndex + 1); };
 
