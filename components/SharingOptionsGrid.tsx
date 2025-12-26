@@ -20,7 +20,6 @@ const ShareOptionCard = ({ icon, color, title, subtitle, link, details, footer, 
                         <p className="text-xs text-slate-500 font-medium">{subtitle}</p>
                     </div>
                 </div>
-                <i className={`fas fa-external-link-alt text-slate-300 group-hover:${accentColor} text-xs transition-colors mt-1`}></i>
             </div>
             
             <div className="text-xs text-slate-600 leading-relaxed mb-3 space-y-1.5">
@@ -34,6 +33,11 @@ const ShareOptionCard = ({ icon, color, title, subtitle, link, details, footer, 
             )}
             
             {extra && <div className="mt-2 pt-2 border-t border-emerald-50">{extra}</div>}
+
+            <div className={`mt-3 pt-2 flex items-center justify-end text-xs font-bold ${accentColor} group-hover:underline`}>
+                <span>Öppna tjänsten</span>
+                <i className="fas fa-external-link-alt ml-1.5"></i>
+            </div>
         </a>
     );
 };
@@ -66,7 +70,7 @@ const SharingOptionsGrid: React.FC = () => {
 
                 {/* VÄLJ MELLAN PRIVAT ELLER OFFENTLIG DELNING */}
                 <div>
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 pl-1">Välj mellan Privat eller Offentlig</h4>
+                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 pl-1">Välj mellan Privat eller Offentlig Delning</h4>
                     <div className="space-y-3">
                         <ShareOptionCard 
                             icon="fa-user-lock"
