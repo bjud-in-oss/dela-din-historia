@@ -38,6 +38,13 @@ interface ChunkData {
     title: string;
 }
 
+interface ExportedFile {
+    id: string;
+    name: string;
+    type: 'png' | 'pdf';
+    timestamp: Date;
+}
+
 interface StoryEditorProps {
   currentBook: MemoryBook; 
   items: DriveFile[];
@@ -82,8 +89,21 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   const [statusLog, setStatusLog] = useState<string[]>([]);
   const rightColumnRef = useRef<HTMLDivElement>(null);
 
+  // Manual Exports State
+  const [exportedFiles, setExportedFiles] = useState<ExportedFile[]>([]);
+
   const addLog = (msg: string) => {
       setStatusLog(prev => [msg, ...prev].slice(0, 20)); // Keep last 20 messages
+  };
+
+  const handleManualExportSuccess = (filename: string, type: 'png' | 'pdf') => {
+      const newFile: ExportedFile = {
+          id: `export-${Date.now()}`,
+          name: filename,
+          type: type,
+          timestamp: new Date()
+      };
+      setExportedFiles(prev => [newFile, ...prev]);
   };
 
   // --- AUTO SAVE TO DRIVE ---
@@ -361,6 +381,8 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
         
         {/* CHUNK METER LIST */}
         <div className={`flex-1 overflow-y-auto bg-slate-50/50 custom-scrollbar ${isCompact ? 'px-1' : 'p-4 space-y-3'}`}>
+             
+             {/* PDF CHUNKS */}
              {chunks.map((chunk, idx) => {
                  const theme = CHUNK_THEMES[idx % CHUNK_THEMES.length];
                  const isGreen = chunk.isSynced;
@@ -434,6 +456,31 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                      </div>
                  );
              })}
+
+             {/* MANUALLY EXPORTED FILES */}
+             {exportedFiles.length > 0 && !isCompact && (
+                 <div className="mt-4">
+                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pl-1">Manuellt sparade filer</h4>
+                     <div className="space-y-2">
+                         {exportedFiles.map(file => (
+                             <div key={file.id} className="bg-white rounded-lg border border-slate-200 p-3 flex items-center justify-between shadow-sm">
+                                <div className="flex items-center space-x-3">
+                                    <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-sm font-bold border border-emerald-100">
+                                        <i className="fas fa-image"></i>
+                                    </div>
+                                    <div className="min-w-0">
+                                        <h5 className="text-xs font-bold text-slate-800 truncate max-w-[150px]">{file.name}</h5>
+                                        <p className="text-[9px] text-slate-400">Sparad {file.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                                    </div>
+                                </div>
+                                <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md uppercase tracking-wider border border-emerald-100">
+                                    Klar
+                                </span>
+                             </div>
+                         ))}
+                     </div>
+                 </div>
+             )}
              
              {/* Loading / Optimizing Placeholder */}
              {optimizingStatus && (
@@ -660,6 +707,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
           onUpdate={handleUpdateItem}
           settings={settings}
           driveFolderId={currentBook.driveFolderId} // Pass drive folder ID
+          onExportSuccess={handleManualExportSuccess} // Callback for tracking
         />
       )}
     </>
@@ -780,7 +828,7 @@ const RichTextListEditor = ({ lines, onChange, onFocusLine, focusedLineId }: { l
         </div>))}</div>);
 };
 
-const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolderId }: any) => {
+const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolderId, onExportSuccess }: any) => {
     const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
     const [pageMeta, setPageMeta] = useState<Record<number, PageMetadata>>(item.pageMeta || {});
     const [activePageIndex, setActivePageIndex] = useState(0);
@@ -869,6 +917,12 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
         try { 
             const pngBlob = await extractHighQualityImage(previewBlob, activePageIndex); 
             await uploadToDrive(accessToken, driveFolderId, filename, pngBlob, 'image/png');
+            
+            // Notify success to parent to update export list
+            if (onExportSuccess) {
+                onExportSuccess(filename, 'png');
+            }
+
             alert(`Bilden "${filename}" har sparats i bokens mapp på Google Drive.\n\nDu kan nu ladda upp den manuellt till "Minnen" på FamilySearch för att kunna tagga ansikten (vilket inte går med PDF-filer).`);
         } catch (e) { 
             alert("Kunde inte spara bilden till Drive."); 

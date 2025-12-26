@@ -80,7 +80,23 @@ const App: React.FC = () => {
   const handleCredentialResponse = (response: any) => {
     const payload = decodeJwt(response.credential);
     if (payload) {
-      setUser({ name: payload.name, email: payload.email, picture: payload.picture });
+      // Restore access token from storage if available to keep session "alive" across reloads
+      const storedToken = localStorage.getItem('google_access_token');
+      const storedTokenExpiry = localStorage.getItem('google_access_token_expiry');
+      let validAccessToken = undefined;
+
+      if (storedToken && storedTokenExpiry) {
+          if (new Date().getTime() < parseInt(storedTokenExpiry)) {
+              validAccessToken = storedToken;
+          }
+      }
+
+      setUser({ 
+          name: payload.name, 
+          email: payload.email, 
+          picture: payload.picture,
+          accessToken: validAccessToken 
+      });
       setIsAuthenticated(true);
     }
   };
@@ -112,7 +128,7 @@ const App: React.FC = () => {
           window.google.accounts.id.initialize({
             client_id: clientId, 
             callback: handleCredentialResponse,
-            auto_select: false
+            auto_select: true // Try to auto-select to restore session
           });
 
           tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
@@ -120,6 +136,11 @@ const App: React.FC = () => {
             scope: "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
             callback: (r: any) => {
               if (r?.access_token) {
+                // Save token to localStorage with 50 min expiry (Drive tokens last ~1h)
+                const expiry = new Date().getTime() + (50 * 60 * 1000);
+                localStorage.setItem('google_access_token', r.access_token);
+                localStorage.setItem('google_access_token_expiry', expiry.toString());
+
                 setUser(prev => prev ? { ...prev, accessToken: r.access_token } : null);
                 setIsAuthenticated(true);
               }
@@ -381,8 +402,11 @@ const App: React.FC = () => {
 
       if (!currentBook) {
           return (
-            <div className="flex flex-col lg:flex-row h-full w-full overflow-hidden bg-[#f8fafc]">
-                <div className={`flex-1 overflow-y-auto p-4 md:p-8 ${!hideIntro ? 'lg:border-r border-slate-200' : ''}`}>
+            // Changed layout: On mobile use flex-col and allow scrolling (no overflow-hidden on parent).
+            // On desktop use flex-row and fixed height.
+            <div className="flex flex-col lg:flex-row h-auto min-h-full lg:h-full w-full bg-[#f8fafc] lg:overflow-hidden">
+                {/* Left side (Dashboard) */}
+                <div className={`flex-1 p-4 md:p-8 ${!hideIntro ? 'lg:border-r border-slate-200' : ''} overflow-y-auto lg:overflow-y-auto`}>
                     <div className="max-w-7xl mx-auto w-full">
                         <Dashboard 
                             books={books} 
@@ -393,9 +417,11 @@ const App: React.FC = () => {
                         />
                     </div>
                 </div>
+                
+                {/* Right side (Info/Landing) - Stacks below on mobile */}
                 {!hideIntro && (
-                    <div className="w-full lg:w-[45%] xl:w-[40%] bg-white shadow-inner lg:shadow-none flex flex-col shrink-0 overflow-hidden border-t lg:border-t-0 border-slate-200">
-                         <div className="flex-1 overflow-y-auto custom-scrollbar">
+                    <div className="w-full lg:w-[45%] xl:w-[40%] bg-white shadow-inner lg:shadow-none flex flex-col shrink-0 border-t lg:border-t-0 border-slate-200 lg:overflow-hidden">
+                         <div className="flex-1 p-4 lg:p-0 lg:overflow-y-auto custom-scrollbar">
                              <LandingPage isGoogleReady={true} googleLoadError={false} isAuthenticated={false} compact={true} />
                          </div>
                          <div className="p-6 border-t border-slate-100 bg-slate-50 shrink-0">
@@ -437,7 +463,12 @@ const App: React.FC = () => {
   return (
     <Layout 
       user={user} 
-      onLogout={() => { setIsAuthenticated(false); setUser(null); }}
+      onLogout={() => { 
+          setIsAuthenticated(false); 
+          setUser(null); 
+          localStorage.removeItem('google_access_token');
+          localStorage.removeItem('google_access_token_expiry');
+      }}
       showBookControls={!!currentBook && isAuthenticated}
       currentBookTitle={currentBook?.title}
       onUpdateBookTitle={currentBook ? (newTitle) => handleUpdateBook({ ...currentBook, title: newTitle }) : undefined}
