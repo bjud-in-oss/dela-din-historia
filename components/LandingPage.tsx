@@ -12,9 +12,9 @@ interface LandingPageProps {
 
 const LandingPage: React.FC<LandingPageProps> = ({ isGoogleReady, googleLoadError, isAuthenticated, compact = false }) => {
   return (
-    // Cleaned up layout: Removed the white card background/shadow/border wrapper.
-    // The content now sits directly on the page background.
-    <div className={`h-full w-full ${compact ? 'bg-white' : 'bg-[#f8fafc]'} overflow-y-auto custom-scrollbar`}>
+    // Cleaned up layout: Remove h-full to allow content to dictate height on mobile stacks. 
+    // On desktop, the parent container will handle scrolling via overflow-y-auto.
+    <div className={`w-full ${compact ? 'bg-white h-auto' : 'bg-[#f8fafc] h-full'} overflow-visible lg:overflow-visible`}>
        {/* Reduced top padding: pt-2 md:pt-6 (was p-4 md:p-8) to bring content closer to header */}
        <div className={`${compact ? 'p-6 pb-2' : 'max-w-7xl mx-auto px-4 pt-2 pb-4 md:px-8 md:pt-6 lg:p-12 lg:pt-8'}`}>
          

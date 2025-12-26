@@ -71,53 +71,83 @@ const App: React.FC = () => {
   const headerGoogleBtnMobileRef = useRef<HTMLDivElement>(null);
   const tokenClientRef = useRef<any>(null);
 
+  // --- PERSISTENCE & INIT ---
+
   const decodeJwt = (token: string) => {
     try {
       return JSON.parse(decodeURIComponent(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')));
     } catch { return null; }
   };
 
+  // Restore session on mount
+  useEffect(() => {
+      const storedToken = localStorage.getItem('google_access_token');
+      const storedTokenExpiry = localStorage.getItem('google_access_token_expiry');
+      const storedUser = localStorage.getItem('google_user_info');
+
+      if (storedToken && storedTokenExpiry && storedUser) {
+          const now = new Date().getTime();
+          if (now < parseInt(storedTokenExpiry)) {
+              try {
+                  const parsedUser = JSON.parse(storedUser);
+                  setUser({ ...parsedUser, accessToken: storedToken });
+                  setIsAuthenticated(true);
+              } catch (e) {
+                  console.error("Failed to restore user", e);
+              }
+          }
+      }
+      
+      const savedSettings = localStorage.getItem('global_settings');
+      if (savedSettings) {
+          try { setGlobalSettings(JSON.parse(savedSettings)); } catch(e){}
+      }
+      
+      const savedHideIntro = localStorage.getItem('hide_intro');
+      if (savedHideIntro === 'true') {
+        setHideIntro(true);
+        setHideIntroNextTime(true);
+      }
+  }, []);
+
   const handleCredentialResponse = (response: any) => {
     const payload = decodeJwt(response.credential);
     if (payload) {
-      // Restore access token from storage if available to keep session "alive" across reloads
-      const storedToken = localStorage.getItem('google_access_token');
-      const storedTokenExpiry = localStorage.getItem('google_access_token_expiry');
-      let validAccessToken = undefined;
-
-      if (storedToken && storedTokenExpiry) {
-          if (new Date().getTime() < parseInt(storedTokenExpiry)) {
-              validAccessToken = storedToken;
-          }
-      }
-
-      setUser({ 
+      const newUser = { 
           name: payload.name, 
           email: payload.email, 
           picture: payload.picture,
-          accessToken: validAccessToken 
-      });
+          // If we have a valid token in state/storage, keep it, otherwise wait for Drive auth
+          accessToken: user?.accessToken 
+      };
+      
+      setUser(newUser);
       setIsAuthenticated(true);
+      localStorage.setItem('google_user_info', JSON.stringify(newUser));
     }
   };
 
   const handleRequestDriveAccess = () => {
     if (tokenClientRef.current && user) {
+      // Use login_hint to ensure consistency between App login and Drive login
       tokenClientRef.current.requestAccessToken({ login_hint: user.email, prompt: 'consent' });
     }
   };
 
-  useEffect(() => {
-    // Load global settings from local storage if available
-    const saved = localStorage.getItem('global_settings');
-    if (saved) {
-        try { setGlobalSettings(JSON.parse(saved)); } catch(e){}
-    }
+  // Logout Helper
+  const handleLogout = () => {
+      setIsAuthenticated(false); 
+      setUser(null); 
+      localStorage.removeItem('google_access_token');
+      localStorage.removeItem('google_access_token_expiry');
+      localStorage.removeItem('google_user_info');
+      setBooks([]);
+  };
 
+  useEffect(() => {
     const clientId = process.env.GOOGLE_CLIENT_ID || '765827205160-ft7dv2ud5ruf2tgft4jvt68dm7eboei6.apps.googleusercontent.com';
     
     if (!clientId) {
-      console.error("Saknar GOOGLE_CLIENT_ID");
       setGoogleLoadError(true);
       return;
     }
@@ -128,7 +158,7 @@ const App: React.FC = () => {
           window.google.accounts.id.initialize({
             client_id: clientId, 
             callback: handleCredentialResponse,
-            auto_select: true // Try to auto-select to restore session
+            auto_select: true 
           });
 
           tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
@@ -136,12 +166,15 @@ const App: React.FC = () => {
             scope: "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
             callback: (r: any) => {
               if (r?.access_token) {
-                // Save token to localStorage with 50 min expiry (Drive tokens last ~1h)
-                const expiry = new Date().getTime() + (50 * 60 * 1000);
+                const expiry = new Date().getTime() + (50 * 60 * 1000); // ~50 mins safety
                 localStorage.setItem('google_access_token', r.access_token);
                 localStorage.setItem('google_access_token_expiry', expiry.toString());
 
-                setUser(prev => prev ? { ...prev, accessToken: r.access_token } : null);
+                setUser(prev => {
+                    const updated = prev ? { ...prev, accessToken: r.access_token } : { name: 'User', email: '', picture: '', accessToken: r.access_token };
+                    localStorage.setItem('google_user_info', JSON.stringify(updated));
+                    return updated;
+                });
                 setIsAuthenticated(true);
               }
             },
@@ -224,15 +257,6 @@ const App: React.FC = () => {
       } catch (e) { console.error(e); }
     }
   }, [isGoogleReady, isAuthenticated]);
-
-  // Load local preferences
-  useEffect(() => {
-    const savedHideIntro = localStorage.getItem('hide_intro');
-    if (savedHideIntro === 'true') {
-      setHideIntro(true);
-      setHideIntroNextTime(true);
-    }
-  }, []);
 
   useEffect(() => {
     window.triggerShare = () => setShowShareModal(true);
@@ -402,11 +426,10 @@ const App: React.FC = () => {
 
       if (!currentBook) {
           return (
-            // Changed layout: On mobile use flex-col and allow scrolling (no overflow-hidden on parent).
-            // On desktop use flex-row and fixed height.
+            // FIX: Layout is now flex-col on mobile (auto height, natural scroll) and flex-row on desktop (full height, internal scroll)
             <div className="flex flex-col lg:flex-row h-auto min-h-full lg:h-full w-full bg-[#f8fafc] lg:overflow-hidden">
-                {/* Left side (Dashboard) */}
-                <div className={`flex-1 p-4 md:p-8 ${!hideIntro ? 'lg:border-r border-slate-200' : ''} overflow-y-auto lg:overflow-y-auto`}>
+                {/* Left side (Dashboard) - Expands naturally on mobile */}
+                <div className={`w-full lg:flex-1 p-4 md:p-8 ${!hideIntro ? 'lg:border-r border-slate-200' : ''} lg:overflow-y-auto`}>
                     <div className="max-w-7xl mx-auto w-full">
                         <Dashboard 
                             books={books} 
@@ -418,10 +441,11 @@ const App: React.FC = () => {
                     </div>
                 </div>
                 
-                {/* Right side (Info/Landing) - Stacks below on mobile */}
+                {/* Right side (Info/Landing) - Stacks below on mobile, Side panel on desktop */}
                 {!hideIntro && (
-                    <div className="w-full lg:w-[45%] xl:w-[40%] bg-white shadow-inner lg:shadow-none flex flex-col shrink-0 border-t lg:border-t-0 border-slate-200 lg:overflow-hidden">
-                         <div className="flex-1 p-4 lg:p-0 lg:overflow-y-auto custom-scrollbar">
+                    <div className="w-full lg:w-[45%] xl:w-[40%] bg-white shadow-inner lg:shadow-none flex flex-col shrink-0 border-t lg:border-t-0 border-slate-200 lg:h-full">
+                         {/* Content area: auto height on mobile, scroll on desktop */}
+                         <div className="p-0 lg:flex-1 lg:overflow-y-auto custom-scrollbar">
                              <LandingPage isGoogleReady={true} googleLoadError={false} isAuthenticated={false} compact={true} />
                          </div>
                          <div className="p-6 border-t border-slate-100 bg-slate-50 shrink-0">
@@ -463,12 +487,7 @@ const App: React.FC = () => {
   return (
     <Layout 
       user={user} 
-      onLogout={() => { 
-          setIsAuthenticated(false); 
-          setUser(null); 
-          localStorage.removeItem('google_access_token');
-          localStorage.removeItem('google_access_token_expiry');
-      }}
+      onLogout={handleLogout}
       showBookControls={!!currentBook && isAuthenticated}
       currentBookTitle={currentBook?.title}
       onUpdateBookTitle={currentBook ? (newTitle) => handleUpdateBook({ ...currentBook, title: newTitle }) : undefined}
