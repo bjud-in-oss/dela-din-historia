@@ -150,7 +150,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
     const safetyFactor = (100 - (settings.safetyMarginPercent || 0)) / 100;
     const limitBytes = settings.maxChunkSizeMB * 1024 * 1024 * safetyFactor;
     
-    const VERIFY_THRESHOLD_BYTES = limitBytes * 0.85; 
+    const VERIFY_THRESHOLD_BYTES = limitBytes * 0.9; 
     const EST_PDF_OVERHEAD_BASE = 15000; 
     const EST_OVERHEAD_PER_PAGE = 3000; 
 
@@ -171,35 +171,46 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
         while (nextCursor < items.length) {
              const item = items[nextCursor];
-             setOptimizingStatus(`Del ${currentChunkId}: Optimerar för FamilySearch-minnen...`);
+             setOptimizingStatus(`Del ${currentChunkId}: Analyserar ${item.name}...`);
              let itemSize = item.processedSize;
+             let needsProcessing = false;
              
-             // OPTIMIZATION: Trust existing size if config hasn't changed. 
-             // This skips re-download/compression on reload.
-             if ((!item.processedBuffer && !item.processedSize) || item.compressionLevelUsed !== settings.compressionLevel) {
+             // Check if we need to process to get size
+             if ((!item.processedSize) || item.compressionLevelUsed !== settings.compressionLevel) {
+                 needsProcessing = true;
+             }
+
+             // If we need processing, we do it now to get accurate size for accumulator
+             if (needsProcessing) {
                  try {
                      const { buffer, size } = await processFileForCache(item, accessToken, settings.compressionLevel);
                      if (isCancelled) return;
                      itemSize = size;
-                     // We update items state to cache the result
-                     // Use a function update to avoid stale closure issues
+                     // Cache update
                      onUpdateItems(prev => prev.map(p => p.id === item.id ? { ...p, processedBuffer: buffer, processedSize: size, compressionLevelUsed: settings.compressionLevel } : p));
-                 } catch (e) { console.error("Processing failed", item.name); itemSize = item.size; }
+                 } catch (e) { 
+                     console.error("Processing failed", item.name); 
+                     itemSize = item.size; 
+                 }
              }
              
+             // Add to batch and update estimate
              currentBatch.push(item);
              estimatedAccumulator += (itemSize || 0) + EST_OVERHEAD_PER_PAGE;
              
-             // If we are getting close to the limit, we do a real check
+             // Smart Optimization:
+             // If we are well below limit, skip heavy verification (generating PDF)
              if (estimatedAccumulator < VERIFY_THRESHOLD_BYTES) {
-                 nextCursor++; await new Promise(r => setTimeout(r, 0)); continue;
+                 nextCursor++; 
+                 // Allow UI to breathe
+                 await new Promise(r => setTimeout(r, 0)); 
+                 continue;
              }
 
+             // If we are close to limit, perform real check
              setOptimizingStatus(`Del ${currentChunkId}: Kontrollerar FamilySearch storleksgräns...`);
              
              try {
-                 // Here we DO need the buffer. If it was trusted (no buffer), we might need to fetch it now.
-                 // But generateCombinedPDF handles re-fetching if buffer is missing.
                  const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel);
                  const realSize = pdfBytes.byteLength;
                  
@@ -217,13 +228,17 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
         
         // Finalize last chunk (if not full but end of list)
         if (!chunkIsFull && currentBatch.length > 0 && finalBatchSizeBytes === 0) {
+             // We might have skipped verification for the last batch if it was small
+             // Calculate final size now mainly for display purposes
+             // But if we trust the accumulation, we can skip if we want to be super fast. 
+             // Ideally we want exact size. Let's do a quick verify if it wasn't done.
              try { const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel); finalBatchSizeBytes = pdfBytes.byteLength; } catch (e) {}
         }
 
         if (!isCancelled && currentBatch.length > 0) {
             const newChunk = { id: currentChunkId, items: currentBatch, sizeBytes: finalBatchSizeBytes || estimatedAccumulator, isOptimized: true, isUploading: false, isSynced: false, title: `${bookTitle} (Del ${currentChunkId})` };
             setChunks(prev => [...prev, newChunk]);
-            addLog(`Del ${currentChunkId} klar för FamilySearch: ${currentBatch.length} objekt, ${(newChunk.sizeBytes / 1024 / 1024).toFixed(1)}MB`);
+            addLog(`Del ${currentChunkId} klar: ${currentBatch.length} objekt, ${(newChunk.sizeBytes / 1024 / 1024).toFixed(1)}MB`);
             setOptimizationCursor(nextCursor); setOptimizingStatus('');
         }
     };
