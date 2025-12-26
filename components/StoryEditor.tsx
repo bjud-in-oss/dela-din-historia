@@ -87,13 +87,16 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       setChunks([]);
   }, [itemsHash, settings.maxChunkSizeMB, settings.compressionLevel]);
 
-  // --- "SUM-FIRST" OPTIMIZATION ALGORITHM ---
+  // --- GREEDY OPTIMIZATION WITH PRECISE VERIFICATION ---
   useEffect(() => {
     let isCancelled = false;
     const limitBytes = settings.maxChunkSizeMB * 1024 * 1024;
-    // PDF Overhead constants (Estimated)
-    const BASE_PDF_OVERHEAD = 15000; // Headers, fonts etc
-    const PER_PAGE_OVERHEAD = 5000;  // Page dicts, content stream overhead
+    // Lower threshold to switch from math estimate to actual PDF generation
+    const VERIFY_THRESHOLD_BYTES = limitBytes * 0.85; // Verify last 15% precisely
+
+    // Constants for estimation (used when below threshold)
+    const EST_PDF_OVERHEAD_BASE = 15000; 
+    const EST_OVERHEAD_PER_PAGE = 3000; 
 
     const processNextStep = async () => {
         if (isCancelled) return;
@@ -110,109 +113,111 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
         }
 
         const currentChunkId = chunks.length + 1;
-        setOptimizingStatus(`Analyserar Del ${currentChunkId}...`);
-
+        
         let currentBatch: DriveFile[] = [];
-        let accumulator = BASE_PDF_OVERHEAD;
+        let estimatedAccumulator = EST_PDF_OVERHEAD_BASE;
         let nextCursor = optimizationCursor;
-        let batchSizeBytes = 0;
+        let finalBatchSizeBytes = 0;
+        let chunkIsFull = false;
 
-        // --- STEP 1: MATHEMATICAL ACCUMULATION (Fast) ---
-        // Iterate and sum up processed sizes until we hit the limit.
-        // We do NOT generate PDFs here.
+        // Loop through items starting from cursor
         while (nextCursor < items.length) {
              const item = items[nextCursor];
-             
-             // Ensure we have the REAL processed size (compressed)
-             // This is the only "heavy" part, but it's per-file and cached.
+             setOptimizingStatus(`Del ${currentChunkId}: Förbereder ${item.name}...`);
+
+             // A. ENSURE PROCESSED (Background Work)
+             // We ensure the item is compressed/cached before adding to batch
              let itemSize = item.processedSize;
              
              if (!item.processedBuffer || item.compressionLevelUsed !== settings.compressionLevel) {
-                 setOptimizingStatus(`Förbereder ${item.name}...`);
                  try {
                      const { buffer, size } = await processFileForCache(item, accessToken, settings.compressionLevel);
                      if (isCancelled) return;
                      
-                     // Update cache
+                     // Update cache in main state so we don't re-process later
                      itemSize = size;
-                     // We use a functional update and check existence to be safe, 
-                     // but locally we just use the 'size' variable for the loop.
+                     // Important: Update state but don't break loop logic.
+                     // We use a functional update to ensure we don't lose other updates.
+                     // Note: This triggers a re-render which might re-trigger effect, hence itemsHash dependency.
+                     // To avoid infinite loop, we only update if buffer is missing.
                      onUpdateItems(prev => prev.map(p => p.id === item.id ? { ...p, processedBuffer: buffer, processedSize: size, compressionLevelUsed: settings.compressionLevel } : p));
                  } catch (e) {
                      console.error("Processing failed", item.name);
-                     itemSize = item.size; // Fallback to raw size
+                     itemSize = item.size; 
                  }
              }
 
-             const projectedSize = accumulator + (itemSize || 0) + PER_PAGE_OVERHEAD;
-
-             // Safety check: If adding this file exceeds limit
-             if (projectedSize > limitBytes) {
-                 // If batch is empty, we MUST add at least one file (even if it's too big alone)
-                 if (currentBatch.length === 0) {
-                     currentBatch.push(item);
-                     accumulator = projectedSize;
-                     nextCursor++;
-                 }
-                 break; // Stop adding
-             }
-
-             // Add to batch
+             // B. ADD TO BATCH CANDIDATE
              currentBatch.push(item);
-             accumulator = projectedSize;
-             nextCursor++;
+             
+             // C. UPDATE ESTIMATE
+             estimatedAccumulator += (itemSize || 0) + EST_OVERHEAD_PER_PAGE;
+
+             // D. DECISION LOGIC
+             // If we are well below limit, just continue (Fast path)
+             if (estimatedAccumulator < VERIFY_THRESHOLD_BYTES) {
+                 nextCursor++;
+                 continue;
+             }
+
+             // If we are in the "Danger Zone" or overshoot, we MUST verify precisely.
+             setOptimizingStatus(`Del ${currentChunkId}: Verifierar plats...`);
+             
+             try {
+                 const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel);
+                 const realSize = pdfBytes.byteLength;
+
+                 if (realSize < limitBytes) {
+                     // FITS! Keep going.
+                     finalBatchSizeBytes = realSize;
+                     nextCursor++;
+                 } else {
+                     // OVERFLOW! 
+                     // This item made it explode.
+                     // Remove it from batch, and finalize this chunk.
+                     currentBatch.pop(); 
+                     
+                     // Note: If batch is empty (single file > limit), we MUST keep it anyway or we get stuck.
+                     if (currentBatch.length === 0) {
+                         currentBatch.push(item);
+                         finalBatchSizeBytes = realSize; // Accept oversized
+                         nextCursor++; 
+                     }
+                     
+                     chunkIsFull = true;
+                     break; // Break the while loop to finalize chunk
+                 }
+             } catch (e) {
+                 console.error("Verification failed", e);
+                 // Fallback: stop here safely
+                 chunkIsFull = true;
+                 break;
+             }
         }
 
-        // --- STEP 2: VERIFICATION (Measure Once) ---
-        // Now we generate the PDF exactly ONE time to confirm our math.
-        if (currentBatch.length > 0) {
-            setOptimizingStatus(`Verifierar Del ${currentChunkId}...`);
-            try {
+        // If loop finished because we ran out of items, calculate final size if needed
+        if (!chunkIsFull && currentBatch.length > 0 && finalBatchSizeBytes === 0) {
+             try {
                 const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel);
-                let realSize = pdfBytes.byteLength;
-                
-                // --- STEP 3: CORRECTION ---
-                // If our math was slightly off (too optimistic) and we are over limit
-                if (realSize > limitBytes && currentBatch.length > 1) {
-                    // Remove last item
-                    const removedItem = currentBatch.pop();
-                    nextCursor--; // Backtrack cursor
-                    
-                    // Re-measure (Fast, because we just removed data)
-                    // In a perfect world we could subtract, but PDF structure changes. 
-                    // This second generation happens rarely if overhead constants are good.
-                    const correctedPdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel);
-                    realSize = correctedPdfBytes.byteLength;
+                finalBatchSizeBytes = pdfBytes.byteLength;
+             } catch (e) {}
+        }
+
+        if (!isCancelled && currentBatch.length > 0) {
+            setChunks(prev => [
+                ...prev, 
+                {
+                    id: currentChunkId,
+                    items: currentBatch,
+                    sizeBytes: finalBatchSizeBytes || estimatedAccumulator, // Fallback to est if calc failed
+                    isOptimized: true,
+                    isUploading: false,
+                    isSynced: false,
+                    title: `${bookTitle} (Del ${currentChunkId})`
                 }
-
-                batchSizeBytes = realSize;
-
-                if (!isCancelled) {
-                    setChunks(prev => [
-                        ...prev, 
-                        {
-                            id: currentChunkId,
-                            items: currentBatch,
-                            sizeBytes: batchSizeBytes,
-                            isOptimized: true,
-                            isUploading: false,
-                            isSynced: false,
-                            title: `${bookTitle} (Del ${currentChunkId})`
-                        }
-                    ]);
-                    setOptimizationCursor(nextCursor);
-                    setOptimizingStatus('');
-                }
-
-            } catch (e) {
-                console.error("PDF Verification failed", e);
-                // Fallback: accept the batch as is or retry?
-                // For now, accept to avoid loop.
-                setOptimizationCursor(nextCursor); 
-            }
-        } else {
-             // Should not happen if items > cursor
-             setOptimizationCursor(items.length);
+            ]);
+            setOptimizationCursor(nextCursor);
+            setOptimizingStatus('');
         }
     };
 

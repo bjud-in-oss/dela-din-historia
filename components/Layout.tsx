@@ -44,54 +44,45 @@ const Layout: React.FC<LayoutProps> = ({
       <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 z-40 relative">
         
         {/* Left: Logo & Title */}
-        <div className="flex items-center max-w-[40%] relative group cursor-pointer" onClick={onBack}>
-           {/* Logo - Large, breaking the bounds (-ml and large width) */}
-           <div className="relative -ml-6 -mt-2 z-50 transition-transform group-hover:scale-105 shrink-0">
+        <div className="flex items-center max-w-[60%] relative group">
+           {/* Logo - Handle Back Navigation */}
+           <div 
+             onClick={onBack} 
+             className={`relative -ml-6 -mt-2 z-50 transition-transform shrink-0 ${onBack ? 'cursor-pointer hover:scale-105 active:scale-95' : ''}`}
+             title={onBack ? "Gå tillbaka" : "Dela din historia"}
+           >
               <AppLogo variant="olive" className="w-24 h-24 text-slate-900 drop-shadow-lg" />
            </div>
            
-           {/* Title - Dynamic: Shows App Name OR Book Title */}
-           <div className="flex flex-col justify-center -ml-1 pl-2 drop-shadow-md min-w-0">
-              {currentBookTitle ? (
-                 <h1 className="font-serif font-bold text-slate-800 text-base md:text-lg line-clamp-3 leading-tight whitespace-normal break-words" title={currentBookTitle}>
-                    {currentBookTitle}
-                 </h1>
+           {/* Title - Dynamic: Shows App Name OR Book Title (Editable) */}
+           <div className="flex flex-col justify-center -ml-1 pl-2 drop-shadow-md min-w-0 w-full">
+              {currentBookTitle !== undefined && onUpdateBookTitle ? (
+                 <input 
+                   value={currentBookTitle}
+                   onChange={(e) => onUpdateBookTitle(e.target.value)}
+                   className="font-serif font-bold text-slate-800 text-lg md:text-xl leading-tight bg-transparent outline-none border-b border-transparent hover:border-slate-300 focus:border-indigo-500 transition-colors w-full placeholder-slate-400"
+                   placeholder="Namnge boken..."
+                   title="Klicka för att ändra namn"
+                 />
               ) : (
-                <>
-                  <span className="font-sans font-bold text-slate-800 text-2xl tracking-tight leading-[0.85]">Dela</span>
-                  <span className="font-sans font-bold text-slate-800 text-2xl tracking-tight leading-[0.85]">Din</span>
-                  <span className="font-sans font-bold text-slate-800 text-2xl tracking-tight leading-[0.85]">Historia</span>
-                </>
+                <div onClick={onBack} className={onBack ? "cursor-pointer" : ""}>
+                  <span className="font-sans font-bold text-slate-800 text-2xl tracking-tight leading-[0.85] block">Dela</span>
+                  <span className="font-sans font-bold text-slate-800 text-2xl tracking-tight leading-[0.85] block">Din</span>
+                  <span className="font-sans font-bold text-slate-800 text-2xl tracking-tight leading-[0.85] block">Historia</span>
+                </div>
               )}
            </div>
         </div>
 
         {/* Center: Global Actions / Navigation */}
         <div className="flex items-center justify-center space-x-2 flex-1 min-w-0 px-4">
-           {user && (
+           {user && showBookControls && (
              <>
-               {/* Show book specific controls if requested */}
-               {showBookControls && (
-                 <>
-                   {/* Create Book Button inside Book View */}
-                   <ActionButton icon="fa-plus" label="Skapa bok" onClick={onCreateBook} />
-                   
-                   {/* Share Button (Renamed from Dela boken) */}
-                   <ActionButton icon="fa-share-nodes" label="Dela" onClick={onShare} />
-                   
-                   {/* Title Editor */}
-                   {currentBookTitle !== undefined && onUpdateBookTitle && (
-                      <div className="ml-4 pl-4 border-l border-slate-200 hidden xl:block shrink-1 min-w-[100px]">
-                         <input 
-                           value={currentBookTitle}
-                           onChange={(e) => onUpdateBookTitle(e.target.value)}
-                           className="text-sm font-serif font-bold text-slate-500 bg-transparent outline-none hover:text-indigo-600 focus:text-indigo-600 w-full truncate placeholder-slate-300"
-                           placeholder="Namnge boken..."
-                         />
-                      </div>
-                   )}
-                 </>
-               )}
+               {/* Create Book Button inside Book View */}
+               <ActionButton icon="fa-plus" label="Skapa bok" onClick={onCreateBook} />
+               
+               {/* Share Button */}
+               <ActionButton icon="fa-share-nodes" label="Dela" onClick={onShare} />
              </>
            )}
         </div>
