@@ -379,6 +379,10 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                     <p className="text-[10px] text-slate-500 font-medium mt-1">
                         {optimizingStatus ? <span className="text-amber-600 animate-pulse"><i className="fas fa-circle-notch fa-spin mr-1"></i> {optimizingStatus}</span> : 'Klar att spara och dela'}
                     </p>
+                    <div className="text-[10px] text-slate-400 mt-2 truncate bg-white p-2 rounded border border-slate-200" title={`Min Enhet / Dela din historia / ${bookTitle}`}>
+                         <i className="fab fa-google-drive mr-1 text-slate-500"></i>
+                         Sökväg: <span className="font-mono text-slate-600">Dela din historia / {bookTitle}</span>
+                    </div>
                  </>
              ) : (
                  <button onClick={toggleOverlay} className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300 transition-colors">

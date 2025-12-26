@@ -33,7 +33,11 @@ const App: React.FC = () => {
   const [showSourceSelector, setShowSourceSelector] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false); 
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  
+  // Create Book Flow State
   const [isCreatingBook, setIsCreatingBook] = useState(false);
+  const [showCreateBookModal, setShowCreateBookModal] = useState(false);
+  const [newBookTitle, setNewBookTitle] = useState('');
   
   // New state to remember pending actions during auth flow
   const [pendingAction, setPendingAction] = useState<'createBook' | 'addSource' | null>(null);
@@ -150,7 +154,8 @@ const App: React.FC = () => {
   useEffect(() => {
       if (user?.accessToken && pendingAction) {
           if (pendingAction === 'createBook') {
-              handleCreateBook();
+              // Instead of creating immediately, show the modal
+              setShowCreateBookModal(true);
           } else if (pendingAction === 'addSource') {
               setShowSourceSelector(true);
           }
@@ -231,9 +236,6 @@ const App: React.FC = () => {
   const toggleIntroCheckbox = (shouldHide: boolean) => {
       setHideIntroNextTime(shouldHide);
       localStorage.setItem('hide_intro', String(shouldHide));
-      // Note: We do NOT update 'hideIntro' here, because we want it to hide "next time", 
-      // not immediately while the user is looking at it, unless we wanted instant feedback. 
-      // The requirement says "nästa gång" (next time).
   };
 
   // STRICT FOLDER CREATION LOGIC
@@ -251,25 +253,41 @@ const App: React.FC = () => {
 
     // 2. Check/Create Book Subfolder
     const bookFiles = await fetchDriveFiles(user.accessToken, rootFolder.id);
-    let bookFolder = bookFiles.find(f => f.name === title && f.type === FileType.FOLDER);
+    let bookFolder = bookFiles.find(f => f.name.toLowerCase() === title.toLowerCase() && f.type === FileType.FOLDER);
 
-    if (!bookFolder) {
-      const bookId = await createFolder(user.accessToken, rootFolder.id, title);
-      return bookId;
+    if (bookFolder) {
+        throw new Error("DUPLICATE_NAME");
     }
-    
-    return bookFolder.id;
+
+    const bookId = await createFolder(user.accessToken, rootFolder.id, title);
+    return bookId;
   };
 
-  const handleCreateBook = async () => {
+  // Triggered when user clicks "Skapa ny bok"
+  const handleInitiateCreateBook = () => {
     if (!user?.accessToken) {
        setPendingAction('createBook');
        handleRequestDriveAccess();
        return;
     }
+    // Open modal to ask for name
+    setNewBookTitle('');
+    setShowCreateBookModal(true);
+  };
+
+  // Triggered when user submits the modal
+  const handleCreateBookSubmit = async () => {
+    const title = newBookTitle.trim();
+    if (!title) return;
+
+    // Check duplicate in local state first
+    if (books.some(b => b.title.toLowerCase() === title.toLowerCase())) {
+        alert("En bok med detta namn finns redan i din lista.");
+        return;
+    }
 
     setIsCreatingBook(true);
-    const title = 'Min Nya Berättelse';
+    setShowCreateBookModal(false);
     
     try {
       // Create folder structure immediately
@@ -287,9 +305,14 @@ const App: React.FC = () => {
       setCurrentBook(newBook);
       setInsertAtIndex(null);
       setShowSourceSelector(true);
-    } catch (e) {
-      console.error("Kunde inte skapa bokmapp", e);
-      alert("Kunde inte skapa mappen på Drive. Kontrollera dina rättigheter.");
+    } catch (e: any) {
+      if (e.message === "DUPLICATE_NAME") {
+          alert("En mapp med detta namn finns redan på Google Drive under 'Dela din historia'. Välj ett unikt namn.");
+          setShowCreateBookModal(true); // Re-open modal
+      } else {
+          console.error("Kunde inte skapa bokmapp", e);
+          alert("Kunde inte skapa mappen på Drive. Kontrollera dina rättigheter.");
+      }
     } finally {
       setIsCreatingBook(false);
     }
@@ -352,7 +375,7 @@ const App: React.FC = () => {
                     <div className="max-w-7xl mx-auto w-full">
                         <Dashboard 
                             books={books} 
-                            onCreateNew={handleCreateBook} 
+                            onCreateNew={handleInitiateCreateBook} 
                             onOpenBook={setCurrentBook} 
                             onUpdateBooks={handleUpdateBooks}
                         />
@@ -426,7 +449,7 @@ const App: React.FC = () => {
               setInsertAtIndex(null); setShowSourceSelector(true); 
           }
       }}
-      onCreateBook={handleCreateBook}
+      onCreateBook={handleInitiateCreateBook}
       onShare={() => setShowShareModal(true)}
       onBack={handleBack} 
       onOpenSettings={() => setShowSettingsModal(true)}
@@ -439,7 +462,7 @@ const App: React.FC = () => {
             <div className="flex flex-col items-center">
                 <i className="fas fa-folder-plus fa-spin text-4xl text-indigo-600 mb-4"></i>
                 <p className="font-bold text-slate-700">Skapar mappstruktur på Drive...</p>
-                <p className="text-xs text-slate-400">Dela din historia / Min Nya Berättelse</p>
+                <p className="text-xs text-slate-400">Dela din historia / {newBookTitle || 'Ny bok'}</p>
             </div>
          </div>
       )}
@@ -459,6 +482,53 @@ const App: React.FC = () => {
                 onClose={() => setShowSourceSelector(false)}
               />
            </div>
+        </div>
+      )}
+
+      {/* Create Book Modal */}
+      {showCreateBookModal && (
+        <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in">
+                 <div className="p-6">
+                     <div className="w-12 h-12 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 mb-4 mx-auto">
+                        <i className="fas fa-book-medical text-xl"></i>
+                     </div>
+                     <h3 className="text-lg font-bold text-slate-900 text-center mb-1">Skapa ny bok</h3>
+                     <p className="text-xs text-slate-500 text-center mb-6">
+                         Ange ett namn för din bok. En mapp med detta namn kommer skapas på din Google Drive.
+                     </p>
+                     
+                     <div className="space-y-4">
+                         <div>
+                             <label className="block text-xs font-bold text-slate-700 mb-1 ml-1">Bokens titel</label>
+                             <input 
+                                autoFocus
+                                type="text" 
+                                value={newBookTitle}
+                                onChange={(e) => setNewBookTitle(e.target.value)}
+                                onKeyDown={(e) => e.key === 'Enter' && newBookTitle.trim() && handleCreateBookSubmit()}
+                                placeholder="T.ex. Farmors memoarer..."
+                                className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-100 outline-none font-bold text-slate-800"
+                             />
+                         </div>
+                         <div className="flex space-x-3">
+                             <button 
+                                onClick={() => setShowCreateBookModal(false)}
+                                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold rounded-xl transition-colors"
+                             >
+                                Avbryt
+                             </button>
+                             <button 
+                                onClick={handleCreateBookSubmit}
+                                disabled={!newBookTitle.trim()}
+                                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl transition-colors disabled:opacity-50 shadow-lg shadow-indigo-200"
+                             >
+                                Skapa
+                             </button>
+                         </div>
+                     </div>
+                 </div>
+            </div>
         </div>
       )}
 

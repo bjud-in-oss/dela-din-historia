@@ -39,7 +39,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ isGoogleReady, googleLoadErro
                    <div>
                        <h3 className="font-bold text-slate-900 text-xl text-left">Samla minnen</h3>
                        <p className="text-base text-slate-600 mt-2 leading-relaxed text-left">
-                           Hämta bilder och dokument direkt från din Drive eller lokala enhet.
+                           Hämta bilder och dokument direkt från din Drive eller lokala enhet. Samla dem i olika böcker.
                        </p>
                    </div>
               </div>

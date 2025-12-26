@@ -76,6 +76,15 @@ const FileBrowser: React.FC<FileBrowserProps> = ({
     onUpdateState({ ...browserState, ...updates });
   };
 
+  const formatSize = (bytes: number) => {
+      if (bytes === 0) return '';
+      if (bytes < 1024) return bytes + ' B';
+      const k = 1024;
+      const sizes = ['KB', 'MB', 'GB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i - 1];
+  };
+
   // --- Actions ---
 
   const handleToggleFile = (file: DriveFile) => {
@@ -307,6 +316,7 @@ const FileBrowser: React.FC<FileBrowserProps> = ({
                      <div key={f.id} className="relative aspect-video rounded-xl border border-indigo-500 bg-indigo-50 p-4 flex flex-col items-center justify-center text-center min-h-[120px]">
                         <i className="fas fa-file text-xl text-indigo-400 mb-2"></i>
                         <span className="text-xs font-bold truncate w-full">{f.name}</span>
+                        <span className="text-[10px] text-indigo-400 mt-1">{formatSize(f.size)}</span>
                         <button 
                           onClick={() => setLocalSelection(prev => prev.filter(x => x.id !== f.id))}
                           className="absolute top-2 right-2 text-indigo-300 hover:text-red-500 p-2"
@@ -361,7 +371,10 @@ const FileBrowser: React.FC<FileBrowserProps> = ({
                                 <i className={`fas ${file.type === FileType.PDF ? 'fa-file-pdf text-red-400' : 'fa-file text-slate-400'}`}></i>
                              )}
                         </div>
-                        <span className="text-sm font-bold text-slate-700 truncate flex-1 min-w-0">{file.name}</span>
+                        <div className="flex-1 min-w-0">
+                             <div className="text-sm font-bold text-slate-700 truncate">{file.name}</div>
+                             {file.type !== FileType.FOLDER && <div className="text-[10px] text-slate-400">{formatSize(file.size)}</div>}
+                        </div>
                         {isSelected && <i className="fas fa-check-circle text-indigo-600 text-xl shrink-0"></i>}
                    </div>
 
@@ -386,10 +399,15 @@ const FileBrowser: React.FC<FileBrowserProps> = ({
                         </div>
                         
                         {/* Bottom: Text Area (Auto Height) */}
-                        <div className="p-3 border-t border-slate-100 flex-1 flex items-start">
+                        <div className="p-3 border-t border-slate-100 flex-1 flex flex-col justify-between">
                              <span className="text-xs font-bold text-slate-700 line-clamp-2 leading-tight break-words w-full">
                                 {file.name}
                              </span>
+                             {file.type !== FileType.FOLDER && (
+                                <span className="text-[9px] font-bold text-slate-400 mt-1 block text-right">
+                                    {formatSize(file.size)}
+                                </span>
+                             )}
                         </div>
                    </div>
                 </div>
