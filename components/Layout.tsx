@@ -49,10 +49,19 @@ const Layout: React.FC<LayoutProps> = ({
            {/* Logo - Acts as Back Button */}
            <div 
              onClick={onBack} 
-             className={`relative -ml-2 md:-ml-6 z-50 transition-transform shrink-0 ${onBack ? 'cursor-pointer hover:scale-105 active:scale-95' : ''}`}
+             className={`relative -ml-2 md:-ml-6 z-50 transition-transform shrink-0 ${onBack ? 'cursor-pointer hover:scale-105 active:scale-95 group/back' : ''}`}
              title={onBack ? "Gå tillbaka" : "Dela din historia"}
            >
-              <AppLogo variant="olive" className="w-16 h-16 md:w-24 md:h-24 text-slate-900 drop-shadow-lg" />
+              {/* Back Arrow Overlay - Floats in the top-left white space of the logo */}
+              {onBack && (
+                  <div className="absolute top-[18%] left-[22%] z-20 animate-in fade-in duration-300">
+                      <div className="w-5 h-5 md:w-6 md:h-6 bg-white/90 backdrop-blur-[1px] rounded-full shadow-sm border border-slate-100 flex items-center justify-center text-slate-500 group-hover/back:text-indigo-600 group-hover/back:bg-white transition-colors">
+                          <i className="fas fa-arrow-left text-[10px] md:text-xs"></i>
+                      </div>
+                  </div>
+              )}
+              
+              <AppLogo variant="olive" className="w-16 h-16 md:w-24 md:h-24 text-slate-900 drop-shadow-lg relative z-10" />
            </div>
            
            {/* Title - Editable Input directly next to logo */}
