@@ -214,6 +214,40 @@ export const moveFile = async (accessToken: string, fileId: string, newParentId:
     }
 };
 
+export const renameFile = async (accessToken: string, fileId: string, newName: string) => {
+    const response = await fetch(`${DRIVE_API_URL}/files/${fileId}`, {
+        method: 'PATCH',
+        headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ name: newName })
+    });
+    
+    if (!response.ok) throw new Error(`Kunde inte byta namn på fil ${fileId}`);
+};
+
+// Rename folder and finding/renaming artifacts inside
+export const renameBookArtifacts = async (accessToken: string, folderId: string, oldTitle: string, newTitle: string) => {
+    // 1. Rename the folder itself
+    await renameFile(accessToken, folderId, newTitle);
+
+    // 2. List all files in the folder
+    const files = await fetchDriveFiles(accessToken, folderId);
+
+    // 3. Rename any file that contains the old title
+    for (const file of files) {
+        if (file.name.includes(oldTitle)) {
+            const newName = file.name.replace(oldTitle, newTitle);
+            try {
+                await renameFile(accessToken, file.id, newName);
+            } catch (e) {
+                console.warn(`Failed to rename artifact ${file.name}`, e);
+            }
+        }
+    }
+};
+
 // Fetches the 'project.json' from a book folder to restore state
 export const fetchProjectState = async (accessToken: string, folderId: string): Promise<MemoryBook | null> => {
     const fileId = await findFileInFolder(accessToken, folderId, 'project.json');
@@ -237,6 +271,7 @@ export const saveProjectState = async (accessToken: string, book: MemoryBook) =>
     if (!book.driveFolderId) return;
     
     // Clean data before saving (remove large buffers or blobs)
+    // IMPORTANT: Save 'processedSize' so we don't have to re-calc on load
     const cleanBook = {
         ...book,
         items: book.items.map(item => ({

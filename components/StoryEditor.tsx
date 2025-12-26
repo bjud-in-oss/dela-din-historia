@@ -38,11 +38,12 @@ interface ChunkData {
     title: string;
 }
 
-interface ExportedFile {
+export interface ExportedFile {
     id: string;
     name: string;
     type: 'png' | 'pdf';
     timestamp: Date;
+    driveId?: string; // ID on Drive if available
 }
 
 interface StoryEditorProps {
@@ -140,12 +141,15 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       setOptimizationCursor(0);
       setChunks([]);
       addLog("Startar ny beräkning...");
-  }, [itemsHash, settings.maxChunkSizeMB, settings.compressionLevel]);
+  }, [itemsHash, settings.maxChunkSizeMB, settings.compressionLevel, settings.safetyMarginPercent]);
 
   // --- GREEDY OPTIMIZATION WITH PRECISE VERIFICATION ---
   useEffect(() => {
     let isCancelled = false;
-    const limitBytes = settings.maxChunkSizeMB * 1024 * 1024;
+    // Apply Safety Margin to the limit (e.g., 5% margin reduces limit to 95%)
+    const safetyFactor = (100 - (settings.safetyMarginPercent || 0)) / 100;
+    const limitBytes = settings.maxChunkSizeMB * 1024 * 1024 * safetyFactor;
+    
     const VERIFY_THRESHOLD_BYTES = limitBytes * 0.85; 
     const EST_PDF_OVERHEAD_BASE = 15000; 
     const EST_OVERHEAD_PER_PAGE = 3000; 
@@ -169,35 +173,53 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
              const item = items[nextCursor];
              setOptimizingStatus(`Del ${currentChunkId}: Optimerar för FamilySearch-minnen...`);
              let itemSize = item.processedSize;
-             if (!item.processedBuffer || item.compressionLevelUsed !== settings.compressionLevel) {
+             
+             // OPTIMIZATION: Trust existing size if config hasn't changed. 
+             // This skips re-download/compression on reload.
+             if ((!item.processedBuffer && !item.processedSize) || item.compressionLevelUsed !== settings.compressionLevel) {
                  try {
                      const { buffer, size } = await processFileForCache(item, accessToken, settings.compressionLevel);
                      if (isCancelled) return;
                      itemSize = size;
+                     // We update items state to cache the result
+                     // Use a function update to avoid stale closure issues
                      onUpdateItems(prev => prev.map(p => p.id === item.id ? { ...p, processedBuffer: buffer, processedSize: size, compressionLevelUsed: settings.compressionLevel } : p));
                  } catch (e) { console.error("Processing failed", item.name); itemSize = item.size; }
              }
+             
              currentBatch.push(item);
              estimatedAccumulator += (itemSize || 0) + EST_OVERHEAD_PER_PAGE;
+             
+             // If we are getting close to the limit, we do a real check
              if (estimatedAccumulator < VERIFY_THRESHOLD_BYTES) {
                  nextCursor++; await new Promise(r => setTimeout(r, 0)); continue;
              }
+
              setOptimizingStatus(`Del ${currentChunkId}: Kontrollerar FamilySearch storleksgräns...`);
+             
              try {
+                 // Here we DO need the buffer. If it was trusted (no buffer), we might need to fetch it now.
+                 // But generateCombinedPDF handles re-fetching if buffer is missing.
                  const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel);
                  const realSize = pdfBytes.byteLength;
+                 
                  if (realSize < limitBytes) {
                      finalBatchSizeBytes = realSize; nextCursor++;
                  } else {
+                     // Too big, backtrack one item
                      currentBatch.pop(); 
+                     // Corner case: A single file is bigger than limit? We must accept it alone.
                      if (currentBatch.length === 0) { currentBatch.push(item); finalBatchSizeBytes = realSize; nextCursor++; }
                      chunkIsFull = true; break;
                  }
              } catch (e) { chunkIsFull = true; break; }
         }
+        
+        // Finalize last chunk (if not full but end of list)
         if (!chunkIsFull && currentBatch.length > 0 && finalBatchSizeBytes === 0) {
              try { const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel); finalBatchSizeBytes = pdfBytes.byteLength; } catch (e) {}
         }
+
         if (!isCancelled && currentBatch.length > 0) {
             const newChunk = { id: currentChunkId, items: currentBatch, sizeBytes: finalBatchSizeBytes || estimatedAccumulator, isOptimized: true, isUploading: false, isSynced: false, title: `${bookTitle} (Del ${currentChunkId})` };
             setChunks(prev => [...prev, newChunk]);
@@ -207,7 +229,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
     };
     const timer = setTimeout(processNextStep, 100);
     return () => { isCancelled = true; clearTimeout(timer); };
-  }, [itemsHash, optimizationCursor, chunks.length, settings.compressionLevel, settings.maxChunkSizeMB]);
+  }, [itemsHash, optimizationCursor, chunks.length, settings.compressionLevel, settings.maxChunkSizeMB, settings.safetyMarginPercent]);
 
   // --- UPLOAD / SYNC LOGIC (Simple Linear Sync) ---
   useEffect(() => {
@@ -265,7 +287,15 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
   if (showShareView) {
       return (
-          <FamilySearchExport items={items} bookTitle={bookTitle} accessToken={accessToken} onBack={onCloseShareView} settings={settings} onUpdateItems={onUpdateItems} />
+          <FamilySearchExport 
+            items={items} 
+            bookTitle={bookTitle} 
+            accessToken={accessToken} 
+            onBack={onCloseShareView} 
+            settings={settings} 
+            onUpdateItems={onUpdateItems} 
+            exportedFiles={exportedFiles} // Pass manually exported files
+          />
       );
   }
 
@@ -319,6 +349,24 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                                             min="5" max="50" step="0.5" 
                                             value={settings.maxChunkSizeMB} 
                                             onChange={(e) => onUpdateSettings({...settings, maxChunkSizeMB: parseFloat(e.target.value)})} 
+                                            className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 mt-2"
+                                        />
+                                    </div>
+                                    
+                                    {/* Safety Margin Slider */}
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-700 flex justify-between">
+                                            <span>Marginal vid tillägg (%):</span>
+                                            <span className="text-slate-400">{settings.safetyMarginPercent || 0}%</span>
+                                        </label>
+                                        <div className="text-[9px] text-slate-400 italic mb-1">
+                                            Lägre marginal = fler sidor per fil, men risk för omräkning vid små ändringar.
+                                        </div>
+                                        <input 
+                                            type="range" 
+                                            min="0" max="20" step="1" 
+                                            value={settings.safetyMarginPercent || 0} 
+                                            onChange={(e) => onUpdateSettings({...settings, safetyMarginPercent: parseInt(e.target.value)})} 
                                             className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 mt-2"
                                         />
                                     </div>
@@ -388,8 +436,10 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                  const isGreen = chunk.isSynced;
                  const isUploading = chunk.isUploading;
                  const sizeMB = (chunk.sizeBytes / (1024 * 1024));
-                 const maxMB = settings.maxChunkSizeMB;
-                 const percentFilled = Math.min(100, (sizeMB / maxMB) * 100);
+                 // Use safety margin for display visualization
+                 const safetyFactor = (100 - (settings.safetyMarginPercent || 0)) / 100;
+                 const effectiveMaxMB = settings.maxChunkSizeMB * safetyFactor;
+                 const percentFilled = Math.min(100, (sizeMB / effectiveMaxMB) * 100);
 
                  if (isCompact) {
                      return (
@@ -446,11 +496,19 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                                     className={`absolute top-0 left-0 h-full transition-all duration-1000 ${theme.bg}`}
                                     style={{ width: `${percentFilled}%` }}
                                  ></div>
+                                 {/* Safety Margin Indicator */}
+                                 {settings.safetyMarginPercent > 0 && (
+                                     <div 
+                                        className="absolute top-0 bottom-0 right-0 bg-red-100/50 border-l border-red-200"
+                                        style={{ width: `${settings.safetyMarginPercent}%` }}
+                                        title="Säkerhetsmarginal"
+                                     ></div>
+                                 )}
                              </div>
                              
                              <div className="flex justify-between text-[10px] font-bold text-slate-500">
                                  <span>{sizeMB.toFixed(1)} MB</span>
-                                 <span>{maxMB.toFixed(1)} MB Max</span>
+                                 <span>{settings.maxChunkSizeMB} MB Max</span>
                              </div>
                          </div>
                      </div>
@@ -835,6 +893,20 @@ const RichTextListEditor = ({ lines, onChange, onFocusLine, focusedLineId }: { l
         </div>))}</div>);
 };
 
+const SidebarThumbnail = ({ pdfDocProxy, pageIndex, item }: { pdfDocProxy: any, pageIndex: number, item?: DriveFile }) => {
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    useEffect(() => {
+        const render = async () => {
+            if (pdfDocProxy && canvasRef.current) {
+                await renderPdfPageToCanvas(pdfDocProxy, pageIndex + 1, canvasRef.current, 0.25);
+            }
+        };
+        render();
+    }, [pdfDocProxy, pageIndex]);
+
+    return <canvas ref={canvasRef} className="w-full h-full object-contain block" />;
+};
+
 const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolderId, onExportSuccess }: any) => {
     const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
     const [pageMeta, setPageMeta] = useState<Record<number, PageMetadata>>(item.pageMeta || {});
@@ -985,13 +1057,6 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
             </div>
         </div>
     );
-};
-
-const SidebarThumbnail = ({ pdfDocProxy, pageIndex, item }: { pdfDocProxy: any, pageIndex: number, item: DriveFile }) => {
-    const canvasRef = useRef<HTMLCanvasElement>(null);
-    useEffect(() => { const render = async () => { if (!pdfDocProxy || !canvasRef.current) return; try { await renderPdfPageToCanvas(pdfDocProxy, pageIndex + 1, canvasRef.current, 0.2); } catch (e) { console.error("Thumb render error", e); } }; render(); }, [pdfDocProxy, pageIndex]);
-    if (item.type === FileType.IMAGE && item.blobUrl && pageIndex === 0) { return <img src={item.blobUrl} className="w-full h-full object-contain" />; }
-    return <canvas ref={canvasRef} className="w-full h-full object-contain" />;
 };
 
 export default StoryEditor;

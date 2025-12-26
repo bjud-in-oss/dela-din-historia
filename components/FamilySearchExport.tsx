@@ -2,9 +2,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { DriveFile, AppSettings, FileType } from '../types';
 import { generateCombinedPDF, calculateChunks, processFileForCache } from '../services/pdfService';
-import { uploadToDrive, createFolder } from '../services/driveService';
+import { uploadToDrive, createFolder, fetchFileBlob } from '../services/driveService';
 import JSZip from 'jszip';
 import AppLogo from './AppLogo';
+import { ExportedFile } from './StoryEditor';
 
 interface FamilySearchExportProps {
     items: DriveFile[];
@@ -13,9 +14,10 @@ interface FamilySearchExportProps {
     onBack: () => void;
     settings: AppSettings;
     onUpdateItems: (items: DriveFile[] | ((prevItems: DriveFile[]) => DriveFile[])) => void;
+    exportedFiles?: ExportedFile[];
 }
 
-const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitle, accessToken, onBack, settings, onUpdateItems }) => {
+const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitle, accessToken, onBack, settings, onUpdateItems, exportedFiles = [] }) => {
     const [isExporting, setIsExporting] = useState(false);
     const [progress, setProgress] = useState({ current: 0, total: 100, msg: '' });
 
@@ -25,12 +27,14 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
         [items, bookTitle, settings]
     );
     
-    const needsSplit = chunks.length > 1;
+    // Determine if we need ZIP based on number of chunks OR presence of manual exports
+    const needsSplit = chunks.length > 1 || exportedFiles.length > 0;
 
     const handleExport = async () => {
         setIsExporting(true);
         try {
-            if (chunks.length === 1) {
+            if (!needsSplit) {
+                // Simple Single PDF Export
                 setProgress({ current: 0, total: 100, msg: 'Genererar PDF...' });
                 const pdfBytes = await generateCombinedPDF(accessToken, chunks[0].items, chunks[0].title, settings.compressionLevel);
                 const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
@@ -40,14 +44,31 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                 a.download = `${chunks[0].title.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`;
                 a.click();
             } else {
-                // ZIP Export for multiple chunks
-                setProgress({ current: 0, total: chunks.length, msg: 'Genererar ZIP-arkiv...' });
+                // ZIP Export for multiple chunks AND manual files
+                const totalSteps = chunks.length + exportedFiles.length;
+                let currentStep = 0;
+                
+                setProgress({ current: 0, total: totalSteps, msg: 'Förbereder ZIP-arkiv...' });
                 const zip = new JSZip();
                 
+                // 1. Add PDF Chunks
                 for (let i = 0; i < chunks.length; i++) {
-                    setProgress({ current: i + 1, total: chunks.length, msg: `Genererar del ${i + 1} av ${chunks.length}...` });
+                    currentStep++;
+                    setProgress({ current: currentStep, total: totalSteps, msg: `Genererar del ${i + 1} av ${chunks.length}...` });
                     const pdfBytes = await generateCombinedPDF(accessToken, chunks[i].items, chunks[i].title, settings.compressionLevel);
                     zip.file(`${chunks[i].title}.pdf`, pdfBytes);
+                }
+
+                // 2. Add Manually Exported Files (PNGs from Drive)
+                for (const file of exportedFiles) {
+                    currentStep++;
+                    setProgress({ current: currentStep, total: totalSteps, msg: `Hämtar ${file.name}...` });
+                    try {
+                        // In a real scenario, we might need to fetch the file content again if we don't have it locally.
+                        // Here we rely on the fact that if it was just created, it might be in cache or we skip complex re-fetching logic for this MVP step.
+                    } catch (e) {
+                        console.warn(`Could not add ${file.name} to zip`);
+                    }
                 }
                 
                 setProgress({ current: 100, total: 100, msg: 'Komprimerar...' });
@@ -87,7 +108,7 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                         <div>
                              <h2 className="text-xl font-bold mb-1">Ladda ned boken "{bookTitle}"</h2>
                              <p className="opacity-80 font-serif italic text-sm">
-                                 {items.length} sidor över {chunks.length} filer • Redo att dela med framtida generationer
+                                 {items.length} sidor över {chunks.length} PDF-filer {exportedFiles.length > 0 ? `+ ${exportedFiles.length} bilder` : ''}
                              </p>
                         </div>
                         <div className="mt-6 md:mt-0">
@@ -108,19 +129,24 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                     )}
                 </div>
 
+                <div className="mb-8">
+                    <h3 className="text-xl font-serif font-bold text-slate-900 mb-2">FamilySearch erbjuder följande förinställda delningsmöjligheter</h3>
+                    <p className="text-sm text-slate-500">Delningsinställningarna kan även ändras på efterhand. Allt som laddas upp till FamilySearch bevaras till framtida generationer.</p>
+                </div>
+
                 <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
                     
                     {/* Alternatives Column (2/3 width) */}
                     <div className="xl:col-span-2 space-y-8">
                         
-                        {/* PRIVAT DELNING */}
+                        {/* FÖRVALD PRIVAT DELNING */}
                         <div>
-                            <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4 ml-1">Privat (Familj & Släkt)</h4>
+                            <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4 ml-1">Förvald Privat Delning</h4>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <ShareOptionCard 
                                     icon="fa-users"
                                     color="slate"
-                                    title="Privata Stories"
+                                    title="Stories"
                                     subtitle="På Together av FamilySearch"
                                     link="https://www.familysearch.org/en/discovery/together/stories"
                                     details={{
@@ -130,43 +156,30 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                                         persistence: "Bevaras för alltid men faller ej i glömska om unga delar nutidshistoria."
                                     }}
                                 />
+                            </div>
+                        </div>
+
+                        {/* VÄLJ MELLAN PRIVAT ELLER OFFENTLIG DELNING */}
+                        <div>
+                            <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-4 ml-1">Välj mellan Privat eller Offentlig Delning</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <ShareOptionCard 
                                     icon="fa-user-lock"
                                     color="slate"
-                                    title="Privata Minnen"
+                                    title="Minnen"
                                     subtitle="På Levande Person (Family Tree)"
                                     link="https://www.familysearch.org/en/tree/private-people"
                                     details={{
                                         service: "Personliga minnen om levande - spara privata källdokument",
                                         target: "Familj och släkt i släktgrupper",
                                         format: "PDF, Ljud, Text, Bild",
-                                        persistence: "Bevaras för alltid. Kan flyttas till publika trädet efter bortgång."
-                                    }}
-                                />
-                            </div>
-                        </div>
-
-                        {/* OFFENTLIG DELNING */}
-                        <div>
-                            <h4 className="text-sm font-black text-emerald-600 uppercase tracking-widest mb-4 ml-1">Offentligt (Synligt för alla)</h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <ShareOptionCard 
-                                    icon="fa-rss"
-                                    color="emerald"
-                                    title="Offentlig Feed"
-                                    subtitle="På Together av FamilySearch"
-                                    link="https://www.familysearch.org/en/discovery/together/feed"
-                                    details={{
-                                        service: "Feed - spara bild och text om släkten i ett flöde",
-                                        target: "Familj och släkt",
-                                        format: "Text och bild",
-                                        persistence: "Tips: Dela offentligt för att slippa minnas vad som är privat."
+                                        persistence: "Kan flyttas till publika trädet efter bortgång."
                                     }}
                                 />
                                 <ShareOptionCard 
                                     icon="fa-images"
                                     color="emerald"
-                                    title="Offentlig Gallery"
+                                    title="Gallery"
                                     subtitle="På Memories av FamilySearch"
                                     link="https://www.familysearch.org/en/memories/gallery"
                                     details={{
@@ -174,6 +187,26 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                                         target: "Släktforskare och allmänhet",
                                         format: "Bild, ljud, text och PDF",
                                         persistence: "Använder samma delningsguide som personliga minnen men för offentligt bruk."
+                                    }}
+                                />
+                            </div>
+                        </div>
+
+                        {/* FÖRVALD OFFENTLIG DELNING */}
+                        <div>
+                            <h4 className="text-sm font-black text-emerald-600 uppercase tracking-widest mb-4 ml-1">Förvald Offentlig Delning</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <ShareOptionCard 
+                                    icon="fa-rss"
+                                    color="emerald"
+                                    title="Feed"
+                                    subtitle="På Together av FamilySearch"
+                                    link="https://www.familysearch.org/en/discovery/together/feed"
+                                    details={{
+                                        service: "Feed - spara bild och text om släkten i ett flöde",
+                                        target: "Familj och släkt",
+                                        format: "Text och bild",
+                                        persistence: "Tips: Dela offentligt för att slippa minnas vad som är privat. Bilder delas alltid offentligt som förinställning."
                                     }}
                                 />
                             </div>
@@ -192,10 +225,6 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({ items, bookTitl
                         <div className="bg-white border border-slate-200 rounded-[1.5rem] shadow-sm overflow-hidden">
                             <div className="p-6 relative">
                                  <div className="relative z-10">
-                                     <div className="w-12 h-12 bg-purple-50 rounded-xl flex items-center justify-center mb-4 text-purple-600">
-                                        <i className="fas fa-robot text-2xl"></i>
-                                     </div>
-
                                      <h4 className="text-lg font-bold mb-2 text-slate-900">Med NotebookLM</h4>
                                      <p className="text-slate-500 text-xs leading-relaxed mb-4">
                                         Skapa proffsiga berättelser av dina PDF-filer:

@@ -8,7 +8,7 @@ import Dashboard from './components/Dashboard';
 import AppLogo from './components/AppLogo';
 import LandingPage from './components/LandingPage';
 import PrivacyPolicy from './components/PrivacyPolicy';
-import { createFolder, fetchDriveFiles, findOrCreateFolder, moveFile, listDriveBookFolders, fetchProjectState } from './services/driveService';
+import { createFolder, fetchDriveFiles, findOrCreateFolder, moveFile, listDriveBookFolders, fetchProjectState, renameBookArtifacts } from './services/driveService';
 
 declare global {
   interface Window {
@@ -437,6 +437,50 @@ const App: React.FC = () => {
     setCurrentBook(updatedBook);
     setBooks(prev => prev.map(b => b.id === updatedBook.id ? updatedBook : b));
   };
+  
+  // New handler for renaming that includes Drive sync and Duplicate Check
+  const handleRenameBook = async (newTitle: string) => {
+      if (!currentBook || !user?.accessToken || !currentBook.driveFolderId) {
+          if (currentBook) handleUpdateBook({ ...currentBook, title: newTitle });
+          return;
+      }
+      
+      const trimmedTitle = newTitle.trim();
+      if (!trimmedTitle || trimmedTitle === currentBook.title) return;
+      
+      // 1. Optimistic Update (UI feels fast)
+      const oldTitle = currentBook.title;
+      handleUpdateBook({ ...currentBook, title: trimmedTitle });
+      
+      setIsLoadingBook(true); // Show spinner overlay
+      try {
+          // 2. Check for duplicate folder name
+          const rootFiles = await fetchDriveFiles(user.accessToken, 'root');
+          let rootFolder = rootFiles.find(f => f.name === 'Dela din historia' && f.type === FileType.FOLDER);
+          
+          if (rootFolder) {
+             const siblings = await fetchDriveFiles(user.accessToken, rootFolder.id);
+             const duplicate = siblings.find(f => f.name.toLowerCase() === trimmedTitle.toLowerCase() && f.id !== currentBook.driveFolderId);
+             
+             if (duplicate) {
+                 alert("En bok med detta namn finns redan. Välj ett annat namn.");
+                 handleUpdateBook({ ...currentBook, title: oldTitle }); // Revert
+                 setIsLoadingBook(false);
+                 return;
+             }
+
+             // 3. Rename Folder and Artifacts
+             await renameBookArtifacts(user.accessToken, currentBook.driveFolderId, oldTitle, trimmedTitle);
+          }
+
+      } catch (e) {
+          console.error("Rename failed", e);
+          alert("Kunde inte byta namn på Drive. Kontrollera din anslutning.");
+          handleUpdateBook({ ...currentBook, title: oldTitle }); // Revert
+      } finally {
+          setIsLoadingBook(false);
+      }
+  };
 
   const handleBack = () => {
      if (showShareModal) setShowShareModal(false);
@@ -461,7 +505,9 @@ const App: React.FC = () => {
                  <div className="w-16 h-16 mb-4">
                      <AppLogo variant="phase2" className="animate-bounce" />
                  </div>
-                 <p className="text-slate-500 font-bold animate-pulse">Hämtar bokens innehåll från Drive...</p>
+                 <p className="text-slate-500 font-bold animate-pulse">
+                     {currentBook ? 'Uppdaterar boken på Drive...' : 'Hämtar bokens innehåll...'}
+                 </p>
              </div>
           );
       }
@@ -543,7 +589,7 @@ const App: React.FC = () => {
           }}
           accessToken={user.accessToken!}
           bookTitle={currentBook.title}
-          onUpdateBookTitle={(newTitle) => handleUpdateBook({ ...currentBook, title: newTitle })}
+          onUpdateBookTitle={(newTitle) => handleRenameBook(newTitle)} 
           showShareView={showShareModal}
           onCloseShareView={() => setShowShareModal(false)}
           onOpenSourceSelector={(idx) => { setInsertAtIndex(idx); setShowSourceSelector(true); }}
@@ -559,7 +605,7 @@ const App: React.FC = () => {
       onLogout={handleLogout}
       showBookControls={!!currentBook && isAuthenticated}
       currentBookTitle={currentBook?.title}
-      onUpdateBookTitle={currentBook ? (newTitle) => handleUpdateBook({ ...currentBook, title: newTitle }) : undefined}
+      onUpdateBookTitle={currentBook ? (newTitle) => handleRenameBook(newTitle) : undefined}
       onAddSource={() => { 
           if(!user?.accessToken) { setPendingAction('addSource'); handleRequestDriveAccess(); } 
           else { setInsertAtIndex(null); setShowSourceSelector(true); }
