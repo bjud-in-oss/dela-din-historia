@@ -527,7 +527,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   return (
     <>
       <div 
-        className="flex h-full bg-[#f0f2f5] overflow-hidden" 
+        className="flex flex-col lg:flex-row h-auto min-h-screen lg:h-full bg-[#f0f2f5] lg:overflow-hidden" 
         onClick={() => {
             setSelectedIds(new Set());
             if (isSidebarCompact && showSidebarOverlay) {
@@ -544,9 +544,10 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
             </div>
          )}
          
-         {/* LEFT: INPUT */}
-         <div className="flex-1 overflow-y-auto scroll-smooth relative border-r border-slate-200 min-w-[200px]">
-             <div className="p-8 pb-32">
+         {/* LEFT: INPUT (Main Content Area) */}
+         {/* Changed to w-full on mobile, flex-1 on desktop. Removed fixed heights on mobile for natural scroll */}
+         <div className="w-full lg:flex-1 lg:overflow-y-auto lg:scroll-smooth relative lg:border-r border-slate-200 min-w-0">
+             <div className="p-4 md:p-8 pb-32">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                     <div className="flex items-center space-x-4 max-w-full md:max-w-[70%]">
                         <div className="shrink-0">
@@ -677,16 +678,21 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
          </div>
 
          {/* RIGHT: OUTPUT (Responsive Container) */}
+         {/* Stacks below content on mobile, sits on right on desktop */}
          <div 
             ref={rightColumnRef} 
-            onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside the panel
-            className={`bg-white border-l border-slate-200 shadow-xl z-20 flex flex-col shrink-0 transition-all duration-300 relative ${isSidebarCompact ? 'w-16' : 'w-80'}`}
+            onClick={(e) => e.stopPropagation()} 
+            className={`
+                bg-white lg:border-l border-t lg:border-t-0 border-slate-200 shadow-xl z-20 flex flex-col shrink-0 transition-all duration-300 relative
+                ${isSidebarCompact ? 'lg:w-16' : 'lg:w-80'}
+                w-full lg:h-full h-auto
+            `}
          >
              {renderFilesList(isSidebarCompact)}
 
-             {/* OVERLAY for Compact Mode Expansion */}
+             {/* OVERLAY for Compact Mode Expansion (Desktop Only) */}
              {isSidebarCompact && showSidebarOverlay && (
-                 <div className="absolute top-0 right-full w-80 h-full bg-white border-r border-slate-200 shadow-2xl z-30 flex flex-col animate-in slide-in-from-right-4">
+                 <div className="hidden lg:flex absolute top-0 right-full w-80 h-full bg-white border-r border-slate-200 shadow-2xl z-30 flex-col animate-in slide-in-from-right-4">
                      <div className="flex justify-end p-2 border-b border-slate-100">
                          <button onClick={() => setShowSidebarOverlay(false)} className="text-slate-400 hover:text-slate-600 p-2">
                              <i className="fas fa-times"></i>

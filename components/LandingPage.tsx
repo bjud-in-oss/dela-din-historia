@@ -8,15 +8,16 @@ interface LandingPageProps {
   googleLoadError: boolean;
   isAuthenticated: boolean;
   compact?: boolean; // New prop for dashboard sidebar mode
+  onOpenPrivacy?: () => void;
 }
 
-const LandingPage: React.FC<LandingPageProps> = ({ isGoogleReady, googleLoadError, isAuthenticated, compact = false }) => {
+const LandingPage: React.FC<LandingPageProps> = ({ isGoogleReady, googleLoadError, isAuthenticated, compact = false, onOpenPrivacy }) => {
   return (
     // Cleaned up layout: Remove h-full to allow content to dictate height on mobile stacks. 
     // On desktop, the parent container will handle scrolling via overflow-y-auto.
-    <div className={`w-full ${compact ? 'bg-white h-auto' : 'bg-[#f8fafc] h-full'} overflow-visible lg:overflow-visible`}>
+    <div className={`w-full ${compact ? 'bg-white h-auto' : 'bg-[#f8fafc] h-full'} overflow-visible lg:overflow-visible flex flex-col`}>
        {/* Reduced top padding: pt-2 md:pt-6 (was p-4 md:p-8) to bring content closer to header */}
-       <div className={`${compact ? 'p-6 pb-2' : 'max-w-7xl mx-auto px-4 pt-2 pb-4 md:px-8 md:pt-6 lg:p-12 lg:pt-8'}`}>
+       <div className={`${compact ? 'p-6 pb-2' : 'max-w-7xl mx-auto px-4 pt-2 pb-4 md:px-8 md:pt-6 lg:p-12 lg:pt-8'} flex-1`}>
          
          {/* Authenticated Message - Always top if visible, but hidden in compact mode */}
          {isAuthenticated && !compact && (
@@ -100,6 +101,16 @@ const LandingPage: React.FC<LandingPageProps> = ({ isGoogleReady, googleLoadErro
            </div>
 
          </div>
+      </div>
+      
+      {/* Footer with Privacy Link */}
+      <div className="p-6 border-t border-slate-100 mt-auto text-center">
+          <button 
+            onClick={onOpenPrivacy}
+            className="text-xs font-bold text-slate-400 hover:text-slate-600 underline decoration-slate-300 underline-offset-2 transition-colors"
+          >
+              Integritetspolicy & Användarvillkor
+          </button>
       </div>
     </div>
   );

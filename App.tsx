@@ -7,6 +7,7 @@ import StoryEditor from './components/StoryEditor';
 import Dashboard from './components/Dashboard';
 import AppLogo from './components/AppLogo';
 import LandingPage from './components/LandingPage';
+import PrivacyPolicy from './components/PrivacyPolicy';
 import { createFolder, fetchDriveFiles, findOrCreateFolder, moveFile, listDriveBookFolders, fetchProjectState } from './services/driveService';
 
 declare global {
@@ -41,6 +42,7 @@ const App: React.FC = () => {
   const [showSourceSelector, setShowSourceSelector] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false); 
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
   
   // Create Book Flow State
   const [isCreatingBook, setIsCreatingBook] = useState(false);
@@ -117,19 +119,28 @@ const App: React.FC = () => {
           name: payload.name, 
           email: payload.email, 
           picture: payload.picture,
-          // If we have a valid token in state/storage, keep it, otherwise wait for Drive auth
           accessToken: user?.accessToken 
       };
       
       setUser(newUser);
       setIsAuthenticated(true);
       localStorage.setItem('google_user_info', JSON.stringify(newUser));
+
+      // AUTO-TRIGGER Drive Access if missing
+      // We do this to create a seamless experience where books load immediately
+      if (!newUser.accessToken && tokenClientRef.current) {
+          setTimeout(() => {
+             // Requesting both file (write) and readonly (read everything) covers all bases
+             tokenClientRef.current.requestAccessToken({ login_hint: payload.email, prompt: '' }); 
+          }, 500);
+      }
     }
   };
 
   const handleRequestDriveAccess = () => {
     if (tokenClientRef.current && user) {
-      // Use login_hint to ensure consistency between App login and Drive login
+      // Prompt 'consent' ensures we get a refresh token behavior if needed, 
+      // but for SPA usually just access token.
       tokenClientRef.current.requestAccessToken({ login_hint: user.email, prompt: 'consent' });
     }
   };
@@ -161,9 +172,13 @@ const App: React.FC = () => {
             auto_select: true 
           });
 
+          // Initialize Token Client for Drive Access
+          // Scopes: 
+          // drive.file = Create and manage files created by this app (Write)
+          // drive.readonly = Read all files (Read old books/photos)
           tokenClientRef.current = window.google.accounts.oauth2.initTokenClient({
             client_id: clientId,
-            scope: "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/drive.file",
+            scope: "https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly",
             callback: (r: any) => {
               if (r?.access_token) {
                 const expiry = new Date().getTime() + (50 * 60 * 1000); // ~50 mins safety
@@ -224,10 +239,19 @@ const App: React.FC = () => {
               const driveBooks = await listDriveBookFolders(user.accessToken!);
               
               setBooks(prevLocalBooks => {
+                  // Merge strategy: Keep existing full objects if ID matches, else add new
+                  // The new listDriveBookFolders now fetches thumbnails/cover images too
                   const merged = driveBooks.map(dBook => {
-                      const localMatch = prevLocalBooks.find(l => l.title === dBook.title); 
+                      const localMatch = prevLocalBooks.find(l => l.title === dBook.title || l.id === dBook.id); 
                       if (localMatch) {
-                           return { ...localMatch, driveFolderId: dBook.driveFolderId, id: dBook.id };
+                           // Preserve local items if already loaded, but update cover/ID
+                           return { 
+                               ...localMatch, 
+                               driveFolderId: dBook.driveFolderId, 
+                               id: dBook.id,
+                               // Update thumbnail if not set locally
+                               items: localMatch.items.length > 0 ? localMatch.items : dBook.items 
+                           };
                       }
                       return dBook;
                   });
@@ -409,7 +433,12 @@ const App: React.FC = () => {
   const renderContent = () => {
       if (!isAuthenticated || !user) {
           return (
-            <LandingPage isGoogleReady={isGoogleReady} googleLoadError={googleLoadError} isAuthenticated={isAuthenticated} />
+            <LandingPage 
+                isGoogleReady={isGoogleReady} 
+                googleLoadError={googleLoadError} 
+                isAuthenticated={isAuthenticated} 
+                onOpenPrivacy={() => setShowPrivacyModal(true)}
+            />
           );
       }
 
@@ -431,6 +460,27 @@ const App: React.FC = () => {
                 {/* Left side (Dashboard) - Expands naturally on mobile */}
                 <div className={`w-full lg:flex-1 p-4 md:p-8 ${!hideIntro ? 'lg:border-r border-slate-200' : ''} lg:overflow-y-auto`}>
                     <div className="max-w-7xl mx-auto w-full">
+                        {/* Auto-trigger Drive Prompt if logged in but no token */}
+                        {isAuthenticated && !user?.accessToken && (
+                            <div className="mb-6 p-6 bg-indigo-50 border border-indigo-100 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4 animate-in fade-in">
+                                <div className="flex items-center gap-4">
+                                    <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center text-indigo-600 shadow-sm">
+                                        <i className="fab fa-google-drive text-2xl"></i>
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-slate-900">Anslut till Drive för att se dina böcker</h3>
+                                        <p className="text-xs text-slate-500">Vi behöver behörighet för att lista och spara dina minnesböcker.</p>
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={handleRequestDriveAccess}
+                                    className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-lg transition-all whitespace-nowrap"
+                                >
+                                    Ge åtkomst
+                                </button>
+                            </div>
+                        )}
+
                         <Dashboard 
                             books={books} 
                             onCreateNew={handleInitiateCreateBook} 
@@ -446,7 +496,13 @@ const App: React.FC = () => {
                     <div className="w-full lg:w-[45%] xl:w-[40%] bg-white shadow-inner lg:shadow-none flex flex-col shrink-0 border-t lg:border-t-0 border-slate-200 lg:h-full">
                          {/* Content area: auto height on mobile, scroll on desktop */}
                          <div className="p-0 lg:flex-1 lg:overflow-y-auto custom-scrollbar">
-                             <LandingPage isGoogleReady={true} googleLoadError={false} isAuthenticated={false} compact={true} />
+                             <LandingPage 
+                                isGoogleReady={true} 
+                                googleLoadError={false} 
+                                isAuthenticated={false} 
+                                compact={true} 
+                                onOpenPrivacy={() => setShowPrivacyModal(true)}
+                             />
                          </div>
                          <div className="p-6 border-t border-slate-100 bg-slate-50 shrink-0">
                              <label className="flex items-center space-x-3 text-sm font-bold text-slate-500 cursor-pointer hover:text-slate-800 transition-colors select-none">
@@ -603,6 +659,10 @@ const App: React.FC = () => {
              </div>
           </div>
         </div>
+      )}
+
+      {showPrivacyModal && (
+          <PrivacyPolicy onClose={() => setShowPrivacyModal(false)} />
       )}
     </Layout>
   );

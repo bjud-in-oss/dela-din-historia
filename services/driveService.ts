@@ -253,6 +253,32 @@ export const saveProjectState = async (accessToken: string, book: MemoryBook) =>
     await uploadToDrive(accessToken, book.driveFolderId, 'project.json', blob, 'application/json');
 };
 
+// Helper to find a suitable cover image in a folder
+const findCoverImageForFolder = async (accessToken: string, folderId: string): Promise<string | undefined> => {
+    try {
+        // Look for images, excluding processed PDFs if possible (though mimetype filter helps)
+        // Limit to 1 result for speed
+        const query = `'${folderId}' in parents and mimeType contains 'image/' and trashed = false`;
+        const params = new URLSearchParams({
+            q: query,
+            fields: 'files(thumbnailLink)',
+            pageSize: '1',
+            corpora: 'user'
+        });
+        
+        const res = await fetch(`${DRIVE_API_URL}/files?${params.toString()}`, {
+            headers: { 'Authorization': `Bearer ${accessToken}` }
+        });
+        const data = await res.json();
+        if (data.files && data.files.length > 0) {
+            return data.files[0].thumbnailLink;
+        }
+    } catch (e) {
+        return undefined;
+    }
+    return undefined;
+};
+
 // Scan the 'Dela din historia' root for book folders
 export const listDriveBookFolders = async (accessToken: string): Promise<MemoryBook[]> => {
     try {
@@ -262,17 +288,33 @@ export const listDriveBookFolders = async (accessToken: string): Promise<MemoryB
 
         // 2. List folders inside
         const folders = await fetchDriveFiles(accessToken, rootId);
-        
-        // 3. Convert to minimal MemoryBook objects
-        return folders
-            .filter(f => f.type === FileType.FOLDER && f.name !== 'Papperskorg')
-            .map(f => ({
+        const folderList = folders.filter(f => f.type === FileType.FOLDER && f.name !== 'Papperskorg');
+
+        // 3. Convert to minimal MemoryBook objects AND fetch covers
+        // Using Promise.all to fetch covers in parallel
+        const books = await Promise.all(folderList.map(async (f) => {
+            const coverThumb = await findCoverImageForFolder(accessToken, f.id);
+            
+            // Create a fake "item" to hold the thumbnail for the Dashboard to see
+            const previewItems = coverThumb ? [{
+                id: 'preview-cover',
+                name: 'Omslag',
+                type: FileType.IMAGE,
+                size: 0,
+                modifiedTime: '',
+                thumbnail: coverThumb
+            } as DriveFile] : [];
+
+            return {
                 id: f.id, // Use Drive ID as Book ID for robustness
                 title: f.name,
-                createdAt: f.modifiedTime, // Drive modified time (now ISO)
-                items: [], // Will be loaded on open
+                createdAt: f.modifiedTime, 
+                items: previewItems, // Populate with preview item so thumbnail shows
                 driveFolderId: f.id
-            }));
+            };
+        }));
+
+        return books;
     } catch (e) {
         console.error("Failed to list books from Drive", e);
         return [];
