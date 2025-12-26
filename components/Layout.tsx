@@ -43,9 +43,10 @@ const Layout: React.FC<LayoutProps> = ({
       {/* Top Navbar - Slimmed down to h-20 but kept large content */}
       <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-8 shrink-0 z-40 relative">
         
-        {/* Left: Logo & Title */}
+        {/* Left: Logo & Title MERGED */}
         <div className="flex items-center max-w-[60%] relative group">
-           {/* Logo - Handle Back Navigation */}
+           
+           {/* Logo - Acts as Back Button */}
            <div 
              onClick={onBack} 
              className={`relative -ml-6 -mt-2 z-50 transition-transform shrink-0 ${onBack ? 'cursor-pointer hover:scale-105 active:scale-95' : ''}`}
@@ -54,13 +55,13 @@ const Layout: React.FC<LayoutProps> = ({
               <AppLogo variant="olive" className="w-24 h-24 text-slate-900 drop-shadow-lg" />
            </div>
            
-           {/* Title - Dynamic: Shows App Name OR Book Title (Editable) */}
-           <div className="flex flex-col justify-center -ml-1 pl-2 drop-shadow-md min-w-0 w-full">
+           {/* Title - Editable Input directly next to logo */}
+           <div className="flex flex-col justify-center -ml-1 pl-2 drop-shadow-md min-w-0 w-full z-40">
               {currentBookTitle !== undefined && onUpdateBookTitle ? (
                  <input 
                    value={currentBookTitle}
                    onChange={(e) => onUpdateBookTitle(e.target.value)}
-                   className="font-serif font-bold text-slate-800 text-lg md:text-xl leading-tight bg-transparent outline-none border-b border-transparent hover:border-slate-300 focus:border-indigo-500 transition-colors w-full placeholder-slate-400"
+                   className="font-serif font-bold text-slate-800 text-lg md:text-xl leading-tight bg-transparent outline-none border-b-2 border-transparent hover:border-slate-200 focus:border-indigo-500 transition-colors w-full placeholder-slate-400 py-1"
                    placeholder="Namnge boken..."
                    title="Klicka för att ändra namn"
                  />

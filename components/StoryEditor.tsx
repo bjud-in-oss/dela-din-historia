@@ -91,7 +91,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   useEffect(() => {
     let isCancelled = false;
     const limitBytes = settings.maxChunkSizeMB * 1024 * 1024;
-    // Lower threshold to switch from math estimate to actual PDF generation
+    // Threshold to switch from math estimate to actual PDF generation
     const VERIFY_THRESHOLD_BYTES = limitBytes * 0.85; // Verify last 15% precisely
 
     // Constants for estimation (used when below threshold)
@@ -157,13 +157,16 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
              // If we are well below limit, just continue (Fast path)
              if (estimatedAccumulator < VERIFY_THRESHOLD_BYTES) {
                  nextCursor++;
+                 // Yield to UI
+                 await new Promise(r => setTimeout(r, 0));
                  continue;
              }
 
              // If we are in the "Danger Zone" or overshoot, we MUST verify precisely.
-             setOptimizingStatus(`Del ${currentChunkId}: Verifierar plats...`);
+             setOptimizingStatus(`Del ${currentChunkId}: Verifierar exakt storlek...`);
              
              try {
+                 // Generate actual PDF in memory to verify size
                  const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel);
                  const realSize = pdfBytes.byteLength;
 
@@ -222,13 +225,13 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
     };
 
     // Trigger loop with a small delay
-    const timer = setTimeout(processNextStep, 50);
+    const timer = setTimeout(processNextStep, 100);
     return () => { isCancelled = true; clearTimeout(timer); };
 
   }, [itemsHash, optimizationCursor, chunks.length, settings.compressionLevel, settings.maxChunkSizeMB]);
 
 
-  // --- UPLOAD / SYNC LOGIC (Linear Sync) ---
+  // --- UPLOAD / SYNC LOGIC (Simple Linear Sync) ---
   useEffect(() => {
       if (!currentBook.driveFolderId) return;
 
@@ -237,11 +240,16 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
           const chunkToSync = chunks.find(c => c.isOptimized && !c.isSynced && !c.isUploading);
           if (!chunkToSync) return;
 
+          // Start syncing
           setChunks(prev => prev.map(c => c.id === chunkToSync.id ? { ...c, isUploading: true } : c));
 
           try {
+              // Note: We regenerate here to ensure consistency, or we could have stored the blob from verification
+              // but storing blobs in state is heavy. Generating again is safer for memory.
               const pdfBytes = await generateCombinedPDF(accessToken, chunkToSync.items, chunkToSync.title, settings.compressionLevel);
               const blob = new Blob([new Uint8Array(pdfBytes)], { type: 'application/pdf' });
+              
+              // We just overwrite/upload. A smarter sync would check if file exists with same hash.
               await uploadToDrive(accessToken, currentBook.driveFolderId!, `${chunkToSync.title}.pdf`, blob);
               
               setChunks(prev => prev.map(c => c.id === chunkToSync.id ? { ...c, isUploading: false, isSynced: true } : c));
@@ -252,7 +260,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
           }
       };
 
-      const t = setTimeout(sync, 1000);
+      const t = setTimeout(sync, 2000); // Wait a bit before starting sync to let optimization stabilize
       return () => clearTimeout(t);
   }, [chunks, currentBook.driveFolderId, accessToken]);
 
