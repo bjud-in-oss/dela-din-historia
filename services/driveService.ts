@@ -1,5 +1,4 @@
 
-
 import { DriveFile, FileType, MemoryBook } from '../types';
 
 const DRIVE_API_URL = 'https://www.googleapis.com/drive/v3';
@@ -259,6 +258,16 @@ export const fetchProjectState = async (accessToken: string, folderId: string): 
         const text = await blob.text();
         const bookData = JSON.parse(text);
         
+        // BUG FIX: Clean up stale blob URLs from persisted thumbnail fields.
+        // If a thumbnail is 'blob:...', it's dead after reload. Remove it to force fallback.
+        if (bookData.items) {
+            bookData.items = bookData.items.map((item: any) => ({
+                ...item,
+                thumbnail: (item.thumbnail && item.thumbnail.startsWith('blob:')) ? undefined : item.thumbnail,
+                blobUrl: undefined // Ensure local blobUrl is also cleared
+            }));
+        }
+
         // Ensure driveFolderId is correct (might have moved)
         return { ...bookData, driveFolderId: folderId };
     } catch (e) {
@@ -280,8 +289,9 @@ export const saveProjectState = async (accessToken: string, book: MemoryBook) =>
             ...item,
             processedBuffer: undefined, // Don't save binary cache to JSON (too heavy)
             blobUrl: undefined, 
-            fileObj: undefined 
-            // We KEEP processedSize and compressionLevelUsed!
+            fileObj: undefined,
+            // Safety clean: Don't save blob URLs as thumbnails for persistence
+            thumbnail: (item.thumbnail && item.thumbnail.startsWith('blob:')) ? undefined : item.thumbnail
         })),
         chunks: book.chunks?.map(chunk => ({
             ...chunk,

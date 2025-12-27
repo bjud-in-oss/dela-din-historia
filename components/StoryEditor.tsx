@@ -40,7 +40,49 @@ export interface ExportedFile {
 
 const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove, onDragStart, onDragOver, chunkInfo }: any) => {
   const isHeader = item.type === FileType.HEADER;
-  
+  const [dimensions, setDimensions] = useState({ width: 'auto', height: '180px' }); // Default start
+  const [imageLoaded, setImageLoaded] = useState(false);
+
+  // A4 Logic: Short side restricts. Ratio ~1.41
+  const SHORT_SIDE_PX = 180;
+  const MAX_SIDE_PX = SHORT_SIDE_PX * 1.414;
+
+  const handleImageLoad = (e: any) => {
+      const naturalWidth = e.target.naturalWidth;
+      const naturalHeight = e.target.naturalHeight;
+      
+      if (!naturalWidth || !naturalHeight) return;
+
+      const isLandscape = naturalWidth > naturalHeight;
+      const isPortrait = naturalHeight > naturalWidth;
+      // Square implies !isLandscape && !isPortrait (roughly) or handled by logic below
+
+      let newWidth = SHORT_SIDE_PX;
+      let newHeight = SHORT_SIDE_PX;
+
+      if (isLandscape) {
+          // Liggande: Begränsas av kortsidan (höjden). Höjd = SHORT.
+          newHeight = SHORT_SIDE_PX;
+          const idealWidth = SHORT_SIDE_PX * (naturalWidth / naturalHeight);
+          // Limit width to A4 landscape max
+          newWidth = Math.min(idealWidth, MAX_SIDE_PX);
+      } else {
+          // Stående eller Kvadrat: Begränsas av kortsidan (bredden). Bredd = SHORT.
+          newWidth = SHORT_SIDE_PX;
+          const idealHeight = SHORT_SIDE_PX * (naturalHeight / naturalWidth);
+          // Limit height to A4 portrait max
+          newHeight = Math.min(idealHeight, MAX_SIDE_PX);
+      }
+
+      setDimensions({ width: `${newWidth}px`, height: `${newHeight}px` });
+      setImageLoaded(true);
+  };
+
+  // Header has fixed size roughly matching a small portrait card
+  const style = isHeader 
+    ? { width: `${SHORT_SIDE_PX}px`, height: `${SHORT_SIDE_PX}px` }
+    : (imageLoaded ? dimensions : { width: `${SHORT_SIDE_PX}px`, height: `${SHORT_SIDE_PX * 1.41}px` }); // Default placeholder portrait
+
   return (
     <div 
       id={id}
@@ -48,28 +90,30 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
       onDragStart={onDragStart}
       onDragOver={onDragOver}
       onClick={onClick}
-      className={`relative group h-52 md:h-80 max-w-full rounded-sm shadow-sm transition-all cursor-pointer overflow-hidden
+      style={style}
+      className={`relative group rounded-sm shadow-sm transition-all cursor-pointer overflow-hidden max-w-full
         ${isSelected ? 'ring-2 ring-indigo-500 z-10' : 'hover:shadow-md hover:scale-[1.01]'}
         ${chunkInfo ? 'border-l-4 ' + chunkInfo.colorClass.replace('bg-', 'border-') : 'border border-slate-200'}
-        ${isHeader ? 'bg-slate-800 w-full md:w-56' : 'bg-white'}
+        ${isHeader ? 'bg-slate-800' : 'bg-white'}
       `}
     >
         {isHeader ? (
              <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center">
-                 <h3 className="text-white font-serif font-bold text-lg leading-tight">{item.headerText}</h3>
+                 <h3 className="text-white font-serif font-bold text-lg leading-tight line-clamp-3">{item.headerText}</h3>
                  <span className="text-slate-400 text-[10px] uppercase tracking-widest mt-2">Nytt kapitel</span>
              </div>
         ) : (
              <>
-                 {/* Image Content - Controls Width of Container */}
+                 {/* Image Content */}
                  {item.thumbnail || item.blobUrl ? (
                      <img 
                         src={item.thumbnail || item.blobUrl} 
-                        className="h-full w-auto max-w-full object-contain bg-slate-100" 
+                        onLoad={handleImageLoad}
+                        className="w-full h-full object-contain bg-slate-100" 
                         alt={item.name} 
                      />
                  ) : (
-                     <div className="h-full w-36 md:w-56 flex items-center justify-center text-slate-300 bg-slate-100">
+                     <div className="w-full h-full flex items-center justify-center text-slate-300 bg-slate-100">
                          <i className={`fas ${item.type === FileType.PDF ? 'fa-file-pdf' : 'fa-file-image'} text-4xl`}></i>
                      </div>
                  )}
@@ -1035,7 +1079,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       return (
           <FamilySearchExport 
             items={items} // Pass generic items (mostly ignored by new export logic)
-            chunks={chunks} // PASS THE STABLE CHUNKS
+            chunks={chunks} // PASS THE STABLE chunks
             isOptimizationComplete={optimizationCursor >= items.length}
             driveFolderId={currentBook.driveFolderId}
             bookTitle={bookTitle} 

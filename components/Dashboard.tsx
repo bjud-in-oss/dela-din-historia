@@ -11,6 +11,127 @@ interface DashboardProps {
   onDeleteBook: (book: MemoryBook) => Promise<void>; // Updated to Promise
 }
 
+// Helper moved outside
+const getThumbnail = (book: MemoryBook) => {
+    if (book.coverImageId) {
+        const item = book.items.find(i => i.id === book.coverImageId);
+        if (item?.thumbnail) return item.thumbnail;
+        if (item?.blobUrl && item.type === FileType.IMAGE) return item.blobUrl;
+    }
+    const firstVisual = book.items.find(i => i.thumbnail || (i.type === FileType.IMAGE && i.blobUrl));
+    if (firstVisual?.thumbnail) return firstVisual.thumbnail;
+    if (firstVisual?.blobUrl) return firstVisual.blobUrl;
+    return null;
+};
+
+// BookCard component moved outside to prevent re-mounting and fix TS error with 'key'
+interface BookCardProps {
+    book: MemoryBook;
+    isSelected: boolean;
+    isDeleting: boolean;
+    onSelect: (e: React.MouseEvent, bookId: string) => void;
+    onDelete: (e: React.MouseEvent, book: MemoryBook) => void;
+}
+
+const BookCard: React.FC<BookCardProps> = ({ book, isSelected, isDeleting, onSelect, onDelete }) => {
+    const thumb = getThumbnail(book);
+    const [dims, setDims] = useState({ width: 'auto', height: '180px' });
+    const [imgLoaded, setImgLoaded] = useState(false);
+
+    const SHORT_SIDE_PX = 180;
+    const MAX_SIDE_PX = SHORT_SIDE_PX * 1.414;
+
+    const onImgLoad = (e: any) => {
+        const nw = e.target.naturalWidth;
+        const nh = e.target.naturalHeight;
+        if(!nw || !nh) return;
+        
+        let w = SHORT_SIDE_PX;
+        let h = SHORT_SIDE_PX;
+
+        if (nw > nh) {
+            // Landscape
+            h = SHORT_SIDE_PX;
+            w = Math.min(SHORT_SIDE_PX * (nw / nh), MAX_SIDE_PX);
+        } else {
+            // Portrait/Square
+            w = SHORT_SIDE_PX;
+            h = Math.min(SHORT_SIDE_PX * (nh / nw), MAX_SIDE_PX);
+        }
+        setDims({ width: `${w}px`, height: `${h}px` });
+        setImgLoaded(true);
+    };
+
+    // Default style if no image
+    const style = imgLoaded ? dims : { width: `${SHORT_SIDE_PX}px`, height: `${SHORT_SIDE_PX*1.41}px` };
+
+    return (
+      <div 
+          onClick={(e) => !isDeleting && onSelect(e, book.id)}
+          style={style}
+          className={`flex flex-col group cursor-pointer relative max-w-full rounded-xl overflow-hidden shadow-sm border border-slate-200 bg-white hover:shadow-lg transition-all ${isSelected ? 'ring-4 ring-indigo-500 ring-offset-1' : ''} ${isDeleting ? 'opacity-70 pointer-events-none' : ''}`}
+      >
+          {/* Image Area */}
+          <div className="flex-1 bg-slate-50 relative overflow-hidden flex items-center justify-center">
+              {isDeleting && (
+                  <div className="absolute inset-0 z-40 bg-white/80 flex flex-col items-center justify-center">
+                      <i className="fas fa-circle-notch fa-spin text-red-500 text-xl mb-2"></i>
+                      <span className="text-[10px] font-bold text-red-500 uppercase tracking-wider">Raderar...</span>
+                  </div>
+              )}
+
+              {!isDeleting && (
+                  <button 
+                      onClick={(e) => onDelete(e, book)}
+                      className="absolute top-2 right-2 z-30 w-6 h-6 bg-white/90 backdrop-blur text-slate-400 hover:text-red-500 hover:bg-white rounded-full flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 transition-all"
+                      title="Ta bort bok"
+                  >
+                      <i className="fas fa-times text-xs"></i>
+                  </button>
+              )}
+
+              {isSelected && !isDeleting && (
+                  <div className="absolute top-2 left-2 z-20 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center shadow-lg animate-in zoom-in">
+                      <i className="fas fa-check text-white text-xs"></i>
+                  </div>
+              )}
+
+              {thumb ? (
+                  <img 
+                      src={thumb} 
+                      alt={book.title}
+                      onLoad={onImgLoad}
+                      className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" 
+                  />
+              ) : (
+                  <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-50 to-blue-50">
+                      <span className="text-4xl font-serif text-indigo-200 italic">{book.title.charAt(0)}</span>
+                  </div>
+              )}
+              
+              <div className={`absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none`}></div>
+          </div>
+
+          {/* Metadata Overlay (Bottom) */}
+          <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/80 to-transparent text-white opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end pointer-events-none">
+              <h3 className="text-xs font-bold leading-tight line-clamp-2 drop-shadow-md">
+                  {book.title}
+              </h3>
+              <div className="flex items-center justify-between mt-1 text-[9px] font-medium opacity-80">
+                   <span>{new Date(book.createdAt).toLocaleDateString()}</span>
+                   <span>{book.items.length} st</span>
+              </div>
+          </div>
+          
+          {/* Always visible title if not hovered (Small bar) */}
+          <div className="p-2 bg-white border-t border-slate-100 group-hover:hidden h-12 flex flex-col justify-center">
+               <h3 className="text-[11px] font-bold text-slate-700 leading-tight truncate">{book.title}</h3>
+               <span className="text-[9px] text-slate-400">{book.items.length} objekt</span>
+          </div>
+      </div>
+    );
+};
+
 const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, onUpdateBooks, onDeleteBook }) => {
   const [selectedBookIds, setSelectedBookIds] = useState<Set<string>>(new Set());
   const [deletingBookIds, setDeletingBookIds] = useState<Set<string>>(new Set());
@@ -82,18 +203,6 @@ const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, o
       window.location.href = `mailto:?subject=${subject}&body=${body}`;
   };
 
-  const getThumbnail = (book: MemoryBook) => {
-      if (book.coverImageId) {
-          const item = book.items.find(i => i.id === book.coverImageId);
-          if (item?.thumbnail) return item.thumbnail;
-          if (item?.blobUrl && item.type === FileType.IMAGE) return item.blobUrl;
-      }
-      const firstVisual = book.items.find(i => i.thumbnail || (i.type === FileType.IMAGE && i.blobUrl));
-      if (firstVisual?.thumbnail) return firstVisual.thumbnail;
-      if (firstVisual?.blobUrl) return firstVisual.blobUrl;
-      return null;
-  };
-
   return (
     <div className="w-full h-full pb-20" onClick={() => setSelectedBookIds(new Set())}>
         <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -120,15 +229,15 @@ const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, o
           </div>
         </header>
 
-        {/* Updated Grid: Denser columns to match Tile width */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 md:gap-6">
+        {/* Dynamic Grid using Flex-Wrap */}
+        <div className="flex flex-wrap gap-4 pb-10 justify-center md:justify-start">
           
-          {/* Create New Card */}
+          {/* Create New Card (Fixed Portrait) */}
           <div 
             onClick={(e) => { e.stopPropagation(); onCreateNew(); }}
-            className="flex flex-col gap-3 group cursor-pointer"
+            className="flex flex-col gap-3 group cursor-pointer w-[180px] h-[254px]" // Fixed A4 Portrait size for "Add New"
           >
-            <div className="aspect-[3/4] w-full rounded-xl border-2 border-dashed border-slate-300 flex flex-col items-center justify-center bg-white/60 hover:bg-indigo-50/40 hover:border-indigo-400 transition-all relative overflow-hidden">
+            <div className="w-full h-full rounded-xl border-2 border-dashed border-slate-300 flex flex-col items-center justify-center bg-white/60 hover:bg-indigo-50/40 hover:border-indigo-400 transition-all relative overflow-hidden">
                <div className="transform group-hover:scale-110 transition-transform duration-500 flex flex-col items-center">
                     <AppLogo variant="olive" className="w-10 h-10 mb-2 opacity-60 group-hover:opacity-100 transition-opacity" />
                     <div className="w-8 h-8 bg-white rounded-full shadow-sm flex items-center justify-center mb-2">
@@ -140,80 +249,16 @@ const Dashboard: React.FC<DashboardProps> = ({ books, onCreateNew, onOpenBook, o
           </div>
 
           {/* Book Cards */}
-          {books.map((book) => {
-            const isSelected = selectedBookIds.has(book.id);
-            const isDeleting = deletingBookIds.has(book.id);
-            const thumb = getThumbnail(book);
-            
-            return (
-                <div 
-                key={book.id}
-                onClick={(e) => !isDeleting && handleSelection(e, book.id)}
-                className={`flex flex-col gap-3 group cursor-pointer relative ${isDeleting ? 'opacity-70 pointer-events-none' : ''}`}
-                >
-                    {/* Cover Image Container - Fixed Aspect Ratio */}
-                    <div className={`aspect-[3/4] w-full bg-slate-100 rounded-xl shadow-sm relative overflow-hidden transition-all border border-slate-200 ${isSelected ? 'ring-4 ring-indigo-500 ring-offset-2' : 'group-hover:shadow-lg group-hover:-translate-y-1'}`}>
-                        
-                        {/* Loading Overlay when deleting */}
-                        {isDeleting && (
-                            <div className="absolute inset-0 z-40 bg-white/80 flex flex-col items-center justify-center">
-                                <i className="fas fa-circle-notch fa-spin text-red-500 text-xl mb-2"></i>
-                                <span className="text-[10px] font-bold text-red-500 uppercase tracking-wider">Raderar...</span>
-                            </div>
-                        )}
-
-                        {/* Delete Button */}
-                        {!isDeleting && (
-                            <button 
-                                onClick={(e) => handleDeleteClick(e, book)}
-                                className="absolute top-2 right-2 z-30 w-6 h-6 bg-white/90 backdrop-blur text-slate-400 hover:text-red-500 hover:bg-white rounded-full flex items-center justify-center shadow-sm opacity-0 group-hover:opacity-100 transition-all"
-                                title="Ta bort bok"
-                            >
-                                <i className="fas fa-times text-xs"></i>
-                            </button>
-                        )}
-
-                        {/* Selection Indicator */}
-                        {isSelected && !isDeleting && (
-                            <div className="absolute top-2 left-2 z-20 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center shadow-lg animate-in zoom-in">
-                                <i className="fas fa-check text-white text-xs"></i>
-                            </div>
-                        )}
-
-                        {/* Image / Placeholder */}
-                        {thumb ? (
-                            <div className="w-full h-full bg-slate-50 flex items-center justify-center overflow-hidden">
-                                <img 
-                                    src={thumb} 
-                                    alt={book.title}
-                                    className="w-full h-full object-contain transition-transform duration-700 group-hover:scale-105" 
-                                />
-                            </div>
-                        ) : (
-                            <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-indigo-50 to-blue-50">
-                                <span className="text-4xl font-serif text-indigo-200 italic">{book.title.charAt(0)}</span>
-                            </div>
-                        )}
-                        
-                        {/* Hover Overlay */}
-                        <div className={`absolute inset-0 bg-gradient-to-t from-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none`}></div>
-                    </div>
-
-                    {/* Metadata - Variable Height */}
-                    <div className="px-1 flex flex-col">
-                        <h3 className="text-sm font-serif font-bold text-slate-900 leading-tight mb-1 line-clamp-2 group-hover:text-indigo-700 transition-colors">
-                            {book.title}
-                        </h3>
-                        <div className="flex items-center justify-between mt-1">
-                             <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{new Date(book.createdAt).toLocaleDateString()}</span>
-                             <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                                {book.items.length} st
-                             </span>
-                        </div>
-                    </div>
-                </div>
-            );
-          })}
+          {books.map((book) => (
+             <BookCard 
+                key={book.id} 
+                book={book} 
+                isSelected={selectedBookIds.has(book.id)}
+                isDeleting={deletingBookIds.has(book.id)}
+                onSelect={handleSelection}
+                onDelete={handleDeleteClick}
+             />
+          ))}
         </div>
 
       {selectedBookIds.size > 0 && (
