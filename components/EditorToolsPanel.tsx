@@ -74,7 +74,7 @@ const EditorToolsPanel: React.FC<EditorToolsPanelProps> = ({
     }, [activeSection, isMobileExpanded]);
 
     const renderContent = () => (
-        <div className="flex flex-col h-full bg-slate-50">
+        <div className="flex flex-col flex-1 min-h-0 w-full bg-slate-50">
             {/* Desktop Header / Mobile Handle */}
             <div className="hidden lg:flex p-4 border-b border-slate-200 items-center justify-between shrink-0 bg-white">
                 <div className="flex items-center space-x-3">
@@ -297,7 +297,7 @@ const EditorToolsPanel: React.FC<EditorToolsPanelProps> = ({
                 ) : (
                     // FULLY EXPANDED DRAWER
                     <div className="flex flex-col h-full rounded-t-2xl overflow-hidden bg-white">
-                        <div className="flex justify-between items-center p-3 border-b border-slate-100 cursor-pointer bg-slate-50" onClick={() => setIsMobileExpanded(false)}>
+                        <div className="flex justify-between items-center p-3 border-b border-slate-100 cursor-pointer bg-slate-50 shrink-0" onClick={() => setIsMobileExpanded(false)}>
                             <span className="text-xs font-bold text-slate-500 uppercase tracking-wider pl-2">Redigera</span>
                             <div className="w-8 h-8 flex items-center justify-center bg-white rounded-full text-slate-400 hover:text-slate-600"><i className="fas fa-chevron-down"></i></div>
                         </div>
