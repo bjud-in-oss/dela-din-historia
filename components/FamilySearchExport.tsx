@@ -147,7 +147,7 @@ const FamilySearchExport: React.FC<FamilySearchExportProps> = ({
                 <div className="flex justify-between items-center mb-8">
                     <div className="flex items-center space-x-4">
                          <div className="shrink-0">
-                            <AppLogo variant="phase3" className="w-16 h-16" />
+                            <AppLogo variant="sunWindow" className="w-16 h-16" />
                          </div>
                          <h1 className="text-2xl font-serif font-bold text-slate-900">Dela på FamilySearch</h1>
                     </div>

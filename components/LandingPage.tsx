@@ -57,7 +57,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ isGoogleReady, googleLoadErro
 
               <div className="flex items-start space-x-5 group">
                    <div className="shrink-0 group-hover:scale-105 transition-transform mt-1">
-                       <AppLogo variant="phase3" className="w-20 h-20" />
+                       <AppLogo variant="sunWindow" className="w-20 h-20" />
                    </div>
                    <div>
                        <h3 className="font-bold text-slate-900 text-xl text-left">Dela oändligt</h3>

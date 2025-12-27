@@ -1079,7 +1079,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       return (
           <FamilySearchExport 
             items={items} // Pass generic items (mostly ignored by new export logic)
-            chunks={chunks} // PASS THE STABLE chunks
+            chunks={chunks} // PASS THE STABLE CHUNKS
             isOptimizationComplete={optimizationCursor >= items.length}
             driveFolderId={currentBook.driveFolderId}
             bookTitle={bookTitle} 
@@ -1249,7 +1249,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
         <div className={`p-4 bg-white border-t border-slate-100 ${isCompact ? 'flex justify-center' : ''}`}>
              {!isCompact ? (
                  <button onClick={() => (window as any).triggerShare?.()} className="w-full text-left bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-lg rounded-[1.5rem] p-4 transition-all group">
-                    <div className="flex items-center space-x-4"><div className="shrink-0 group-hover:scale-105 transition-transform"><AppLogo variant="phase3" className="w-16 h-16" /></div><div><h2 className="text-xl font-serif font-bold text-slate-900 group-hover:text-indigo-700 transition-colors">Dela oändligt</h2><p className="text-[10px] text-slate-500 font-medium mt-1 uppercase tracking-wider">Tryck för att dela</p></div><div className="ml-auto text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-1 transition-all"><i className="fas fa-chevron-right text-lg"></i></div></div>
+                    <div className="flex items-center space-x-4"><div className="shrink-0 group-hover:scale-105 transition-transform"><AppLogo variant="sunWindow" className="w-16 h-16" /></div><div><h2 className="text-xl font-serif font-bold text-slate-900 group-hover:text-indigo-700 transition-colors">Dela oändligt</h2><p className="text-[10px] text-slate-500 font-medium mt-1 uppercase tracking-wider">Tryck för att dela</p></div><div className="ml-auto text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-1 transition-all"><i className="fas fa-chevron-right text-lg"></i></div></div>
                  </button>
              ) : (
                  <button onClick={() => (window as any).triggerShare?.()} className="w-10 h-10 bg-indigo-50 hover:bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 transition-colors"><i className="fas fa-share-nodes"></i></button>
