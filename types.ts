@@ -96,3 +96,11 @@ export interface MemoryBook {
   optimizationCursor?: number; // Index where optimization stopped
   optimizationHash?: string; // Hash to verify chunks validity
 }
+
+export interface ExportedFile {
+    id: string;
+    name: string;
+    type: 'png' | 'pdf';
+    timestamp: Date;
+    driveId?: string; 
+}

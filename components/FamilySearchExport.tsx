@@ -1,11 +1,10 @@
 
 import React, { useState } from 'react';
-import { DriveFile, AppSettings, ChunkData } from '../types';
+import { DriveFile, AppSettings, ChunkData, ExportedFile } from '../types';
 import { generateCombinedPDF } from '../services/pdfService';
 import { fetchFileBlob, findFileInFolder } from '../services/driveService';
 import JSZip from 'jszip';
 import AppLogo from './AppLogo';
-import { ExportedFile } from './StoryEditor';
 import SharingOptionsGrid from './SharingOptionsGrid';
 import NotebookLMTip from './NotebookLMTip';
 

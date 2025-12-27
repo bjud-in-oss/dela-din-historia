@@ -1,28 +1,13 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { DriveFile, FileType, TextConfig, RichTextLine, PageMetadata, AppSettings, MemoryBook, CompressionLevel, ChunkData } from '../types';
+import { DriveFile, FileType, TextConfig, RichTextLine, PageMetadata, AppSettings, MemoryBook, CompressionLevel, ChunkData, ExportedFile } from '../types';
 import { generateCombinedPDF, splitPdfIntoPages, mergeFilesToPdf, createPreviewWithOverlay, getPdfPageCount, DEFAULT_TEXT_CONFIG, DEFAULT_FOOTER_CONFIG, getPdfDocument, renderPdfPageToCanvas, extractHighQualityImage, processFileForCache, generatePageThumbnail } from '../services/pdfService';
 import { uploadToDrive, saveProjectState } from '../services/driveService';
 import FamilySearchExport from './FamilySearchExport';
 import AppLogo from './AppLogo';
 import StoryEditorSidebar from './StoryEditorSidebar';
-
-// Distinct visual colors for chunks (exported for use in Tiles)
-export const CHUNK_THEMES = [
-    { border: 'border-indigo-500', bg: 'bg-indigo-500', text: 'text-indigo-700', lightBg: 'bg-indigo-50' },
-    { border: 'border-emerald-500', bg: 'bg-emerald-500', text: 'text-emerald-700', lightBg: 'bg-emerald-50' },
-    { border: 'border-amber-500', bg: 'bg-amber-500', text: 'text-amber-700', lightBg: 'bg-amber-50' },
-    { border: 'border-rose-500', bg: 'bg-rose-500', text: 'text-rose-700', lightBg: 'bg-rose-50' },
-    { border: 'border-cyan-500', bg: 'bg-cyan-500', text: 'text-cyan-700', lightBg: 'bg-cyan-50' }
-];
-
-export interface ExportedFile {
-    id: string;
-    name: string;
-    type: 'png' | 'pdf';
-    timestamp: Date;
-    driveId?: string; 
-}
+import EditorToolsPanel from './EditorToolsPanel';
+import { CHUNK_THEMES } from './theme';
 
 // --- COMPONENTS ---
 
@@ -151,25 +136,6 @@ const ListViewItem = ({ item, index, isSelected, onClick, onEdit, chunkInfo, onD
             <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-2 text-slate-300 hover:text-indigo-600"><i className="fas fa-pen"></i></button>
         </div>
     );
-};
-
-const RichTextListEditor = ({ lines, onChange, onFocusLine, focusedLineId }: { lines: RichTextLine[], onChange: (l: RichTextLine[]) => void, onFocusLine: (id: string | null) => void, focusedLineId: string | null }) => {
-    const handleTextChange = (id: string, newText: string) => onChange(lines.map(l => l.id === id ? { ...l, text: newText } : l));
-    const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            const newLine: RichTextLine = { id: `line-${Date.now()}`, text: '', config: { ...lines[index].config } };
-            const newLines = [...lines]; newLines.splice(index + 1, 0, newLine); onChange(newLines);
-        } else if (e.key === 'Backspace' && lines[index].text === '' && lines.length > 1) {
-            e.preventDefault(); onChange(lines.filter((_, i) => i !== index));
-        }
-    };
-    if (lines.length === 0) return (<button onClick={() => onChange([{ id: `init-${Date.now()}`, text: '', config: DEFAULT_TEXT_CONFIG }])} className="text-xs text-indigo-500 font-bold hover:bg-indigo-50 p-2 rounded w-full text-left">+ Lägg till textrad</button>);
-    return (<div className="space-y-2">{lines.map((line, index) => (
-        <div key={line.id} className={`flex items-center group relative ${focusedLineId === line.id ? 'ring-2 ring-indigo-100 rounded-lg' : ''}`}>
-            <input value={line.text} onChange={(e) => handleTextChange(line.id, e.target.value)} onFocus={() => onFocusLine(line.id)} onBlur={() => {}} onKeyDown={(e) => handleKeyDown(e, index)} className="w-full bg-transparent border-b border-transparent hover:border-slate-200 focus:border-indigo-500 outline-none py-1 px-2 font-serif text-slate-800 transition-colors" style={{ fontWeight: line.config.isBold ? 'bold' : 'normal', fontStyle: line.config.isItalic ? 'italic' : 'normal', fontSize: Math.max(12, line.config.fontSize * 0.7) + 'px', textAlign: line.config.alignment }} placeholder="Skriv här..." />
-            <button onClick={() => onChange(lines.filter(l => l.id !== line.id))} className="absolute right-2 text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity px-2" tabIndex={-1}><i className="fas fa-times"></i></button>
-        </div>))}</div>);
 };
 
 const SidebarThumbnail = ({ pdfDocProxy, pageIndex, item }: { pdfDocProxy: any, pageIndex: number, item?: DriveFile }) => {
@@ -310,9 +276,10 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
     return (
         <div className="fixed inset-0 z-[100] bg-slate-900 flex flex-col animate-in fade-in duration-200">
             {/* Toolbar */}
-            <div className="bg-slate-800 text-white h-14 flex items-center justify-between px-4 border-b border-slate-700 shrink-0">
+            <div className="bg-slate-800 text-white h-14 flex items-center justify-between px-4 border-b border-slate-700 shrink-0 z-50">
                 <div className="flex items-center space-x-4">
-                    <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="text-slate-300 hover:text-white">
+                    {/* Hide sidebar toggle on mobile since sidebar is hidden there */}
+                    <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="text-slate-300 hover:text-white hidden lg:block">
                         <i className="fas fa-bars text-lg"></i>
                     </button>
                     <span className="font-bold text-sm truncate max-w-[200px]">{item.name}</span>
@@ -323,7 +290,7 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
                     <button onClick={() => setActivePageIndex(Math.min(totalPages - 1, activePageIndex + 1))} disabled={activePageIndex === totalPages - 1} className="w-8 h-8 rounded hover:bg-slate-700 disabled:opacity-30"><i className="fas fa-chevron-right"></i></button>
                 </div>
                 <div className="flex items-center space-x-3">
-                    <button onClick={handleCopyPageToPng} disabled={isSavingImage || isSavingThumbnail} className="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center space-x-2 shadow-lg disabled:opacity-50">
+                    <button onClick={handleCopyPageToPng} disabled={isSavingImage || isSavingThumbnail} className="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center space-x-2 shadow-lg disabled:opacity-50 hidden sm:flex">
                         {isSavingImage ? <i className="fas fa-circle-notch fa-spin"></i> : <i className="fas fa-save"></i>}
                         <span>{isSavingImage ? 'Sparar...' : 'Spara bild'}</span>
                     </button>
@@ -335,9 +302,10 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
             </div>
             
             {/* Workspace */}
-            <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 flex overflow-hidden relative">
+                {/* Left Sidebar - Hidden on mobile */}
                 {isSidebarOpen && (
-                    <div className="w-48 bg-[#222] border-r border-slate-700 flex flex-col overflow-y-auto custom-scrollbar shrink-0">
+                    <div className="hidden lg:flex w-48 bg-[#222] border-r border-slate-700 flex-col overflow-y-auto custom-scrollbar shrink-0">
                         <div className="p-4 space-y-4">
                             {Array.from({ length: totalPages }).map((_, idx) => (
                                 <div key={idx} onClick={() => setActivePageIndex(idx)} className={`cursor-pointer group relative flex flex-col items-center ${activePageIndex === idx ? 'opacity-100' : 'opacity-60 hover:opacity-100'}`}>
@@ -352,7 +320,7 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
                 )}
                 
                 {/* Main View */}
-                <div className="flex-1 bg-[#1a1a1a] relative flex items-center justify-center overflow-auto p-8">
+                <div className="flex-1 bg-[#1a1a1a] relative flex items-center justify-center overflow-auto p-4 md:p-8 pb-20 lg:pb-8">
                      {isLoadingPreview && (
                          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 backdrop-blur-sm">
                              <i className="fas fa-circle-notch fa-spin text-indigo-400 text-4xl mb-4"></i>
@@ -370,110 +338,21 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
                          </div>
                      )}
                      <div className="shadow-2xl bg-white relative">
-                         <canvas ref={mainCanvasRef} className="block max-w-full max-h-[85vh] h-auto w-auto" />
+                         <canvas ref={mainCanvasRef} className="block max-w-full max-h-[75vh] md:max-h-[85vh] h-auto w-auto" />
                      </div>
                 </div>
                 
-                {/* Right Panel: Tools */}
-                <div className="w-80 bg-white border-l border-slate-200 flex flex-col z-20 shadow-xl shrink-0">
-                     <div className="p-4 bg-slate-50 border-b border-slate-200 flex items-center space-x-3">
-                         <div className="shrink-0"><AppLogo variant="phase2" className="w-8 h-8" /></div>
-                         <h3 className="font-bold text-slate-800 text-lg leading-tight">Berätta kortfattat</h3>
-                     </div>
-                     <div className="bg-white p-2 border-b border-slate-200 flex flex-wrap gap-2">
-                         <div className="flex bg-slate-100 rounded p-1">
-                             <button onClick={() => updateActiveConfig('isBold', !currentConfig.isBold)} className={`w-7 h-7 rounded text-xs ${currentConfig.isBold ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-bold"></i></button>
-                             <button onClick={() => updateActiveConfig('isItalic', !currentConfig.isItalic)} className={`w-7 h-7 rounded text-xs ${currentConfig.isItalic ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-italic"></i></button>
-                         </div>
-                         <div className="flex bg-slate-100 rounded p-1">
-                             <button onClick={() => updateActiveConfig('alignment', 'left')} className={`w-7 h-7 rounded text-xs ${currentConfig.alignment === 'left' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-align-left"></i></button>
-                             <button onClick={() => updateActiveConfig('alignment', 'center')} className={`w-7 h-7 rounded text-xs ${currentConfig.alignment === 'center' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-align-center"></i></button>
-                             <button onClick={() => updateActiveConfig('alignment', 'right')} className={`w-7 h-7 rounded text-xs ${currentConfig.alignment === 'right' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-align-right"></i></button>
-                         </div>
-                         {activeSection === 'header' && (
-                             <div className="flex bg-slate-100 rounded p-1">
-                                 <button onClick={() => updateActiveConfig('verticalPosition', 'top')} className={`w-7 h-7 rounded text-xs ${currentConfig.verticalPosition === 'top' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-arrow-up"></i></button>
-                                 <button onClick={() => updateActiveConfig('verticalPosition', 'center')} className={`w-7 h-7 rounded text-xs ${currentConfig.verticalPosition === 'center' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-arrows-alt-v"></i></button>
-                                 <button onClick={() => updateActiveConfig('verticalPosition', 'bottom')} className={`w-7 h-7 rounded text-xs ${currentConfig.verticalPosition === 'bottom' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-arrow-down"></i></button>
-                             </div>
-                         )}
-                         <button 
-                            onClick={() => {
-                                updateActiveConfig('backgroundColor', '#ffffff');
-                                updateActiveConfig('backgroundOpacity', 0.8);
-                                updateActiveConfig('padding', 10);
-                            }}
-                            className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-[10px] font-bold text-slate-600 flex items-center gap-1"
-                            title="Lägg till vit bakgrund"
-                         >
-                             <div className="w-3 h-3 bg-white border border-slate-300"></div> +Vit
-                         </button>
-                     </div>
-                     <div className="px-4 py-3 border-b border-slate-100">
-                         <div className="flex justify-between text-[10px] font-bold text-slate-500 mb-1"><span>Textstorlek</span><span>{currentConfig.fontSize}px</span></div>
-                         <input type="range" min="8" max="72" value={currentConfig.fontSize} onChange={(e) => updateActiveConfig('fontSize', parseInt(e.target.value))} className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
-                     </div>
-
-                     <div className="px-4 py-3 border-b border-slate-100 space-y-3">
-                         <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Stil & Färg</h4>
-                         <div className="grid grid-cols-2 gap-2">
-                             <div>
-                                 <label className="text-[9px] font-bold text-slate-500 block mb-1">Textfärg</label>
-                                 <div className="flex items-center gap-2">
-                                     <input type="color" value={currentConfig.color || '#000000'} onChange={(e) => updateActiveConfig('color', e.target.value)} className="w-6 h-6 rounded cursor-pointer border border-slate-200 p-0" />
-                                     <span className="text-[10px] font-mono text-slate-400">{currentConfig.color || '#000'}</span>
-                                 </div>
-                             </div>
-                             <div>
-                                 <label className="text-[9px] font-bold text-slate-500 block mb-1">Bakgrundsfärg</label>
-                                 <div className="flex items-center gap-2">
-                                     <input type="color" value={currentConfig.backgroundColor || '#ffffff'} onChange={(e) => updateActiveConfig('backgroundColor', e.target.value)} className="w-6 h-6 rounded cursor-pointer border border-slate-200 p-0" />
-                                     <button onClick={() => updateActiveConfig('backgroundOpacity', 0)} className="text-[9px] text-red-400 hover:text-red-600 font-bold px-1" title="Ta bort bakgrund">X</button>
-                                 </div>
-                             </div>
-                         </div>
-                         <div>
-                             <div className="flex justify-between text-[9px] font-bold text-slate-500 mb-1"><span>Opacitet (Bakgrund)</span><span>{Math.round((currentConfig.backgroundOpacity || 0) * 100)}%</span></div>
-                             <input type="range" min="0" max="1" step="0.1" value={currentConfig.backgroundOpacity || 0} onChange={(e) => updateActiveConfig('backgroundOpacity', parseFloat(e.target.value))} className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
-                         </div>
-                         <div>
-                             <div className="flex justify-between text-[9px] font-bold text-slate-500 mb-1"><span>Luft (Padding)</span><span>{currentConfig.padding || 0}px</span></div>
-                             <input type="range" min="0" max="50" step="1" value={currentConfig.padding || 0} onChange={(e) => updateActiveConfig('padding', parseInt(e.target.value))} className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
-                         </div>
-                     </div>
-                     {activeSection === 'footer' && (
-                         <div className="px-4 py-3 border-b border-slate-100 bg-amber-50/50">
-                             <div className="flex justify-between text-[10px] font-bold text-amber-700 mb-1"><span>Fälthöjd (under bild)</span><span>{currentConfig.boxHeight || 'Auto'}</span></div>
-                             <input 
-                                type="range" 
-                                min="50" 
-                                max="800" 
-                                step="10" 
-                                value={currentConfig.boxHeight || 150} 
-                                onChange={(e) => updateActiveConfig('boxHeight', parseInt(e.target.value))} 
-                                className="w-full h-1 bg-amber-200 rounded-lg appearance-none cursor-pointer accent-amber-600" 
-                             />
-                             <div className="text-right mt-1">
-                                 <button onClick={() => updateActiveConfig('boxHeight', undefined)} className="text-[9px] text-amber-500 hover:text-amber-700 underline">Återställ till auto</button>
-                             </div>
-                         </div>
-                     )}
-
-                     <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                        <div className={`rounded-lg border p-3 cursor-pointer transition-all ${activeSection === 'header' ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-200' : 'bg-white border-slate-200 hover:border-slate-300'}`} onClick={() => setActiveSection('header')}>
-                            <label className="text-[10px] font-black uppercase text-indigo-900 mb-2 block">Text PÅ sidan</label>
-                            <RichTextListEditor lines={getCurrentMeta().headerLines || []} onChange={(lines) => updateCurrentMeta({ headerLines: lines })} onFocusLine={setFocusedLineId} focusedLineId={focusedLineId}/>
-                        </div>
-                        <div className={`rounded-lg border p-3 cursor-pointer transition-all ${activeSection === 'footer' ? 'bg-indigo-50 border-indigo-200 ring-1 ring-indigo-200' : 'bg-white border-slate-200 hover:border-slate-300'}`} onClick={() => setActiveSection('footer')}>
-                            <label className="text-[10px] font-black uppercase text-slate-500 mb-2 block">Text UNDER sidan</label>
-                            <RichTextListEditor lines={getCurrentMeta().footerLines || []} onChange={(lines) => updateCurrentMeta({ footerLines: lines })} onFocusLine={setFocusedLineId} focusedLineId={focusedLineId}/>
-                        </div>
-                         <label className="flex items-center space-x-3 p-3 bg-slate-50 rounded-lg cursor-pointer hover:bg-slate-100 transition-colors border border-slate-100">
-                             <input type="checkbox" checked={getCurrentMeta().hideObject || false} onChange={(e) => updateCurrentMeta({ hideObject: e.target.checked })} className="w-4 h-4 text-indigo-600 rounded focus:ring-indigo-500"/>
-                             <div><span className="text-xs font-bold text-slate-700 block">Dölj originalbilden</span></div>
-                         </label>
-                     </div>
-                </div>
+                {/* Right Panel: Tools (Modularized) */}
+                <EditorToolsPanel 
+                    activeSection={activeSection}
+                    setActiveSection={setActiveSection}
+                    currentConfig={currentConfig}
+                    updateActiveConfig={updateActiveConfig}
+                    pageMeta={getCurrentMeta()}
+                    updateCurrentMeta={updateCurrentMeta}
+                    focusedLineId={focusedLineId}
+                    setFocusedLineId={setFocusedLineId}
+                />
             </div>
         </div>
     );

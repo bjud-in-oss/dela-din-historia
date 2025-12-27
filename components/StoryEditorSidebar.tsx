@@ -1,17 +1,8 @@
 
 import React, { useState } from 'react';
-import { ChunkData, AppSettings, CompressionLevel } from '../types';
+import { ChunkData, AppSettings, CompressionLevel, ExportedFile } from '../types';
 import AppLogo from './AppLogo';
-import { ExportedFile } from './StoryEditor';
-
-// Duplicate themes here to ensure standalone styling logic
-const CHUNK_THEMES = [
-    { border: 'border-indigo-500', bg: 'bg-indigo-500', text: 'text-indigo-700', lightBg: 'bg-indigo-50' },
-    { border: 'border-emerald-500', bg: 'bg-emerald-500', text: 'text-emerald-700', lightBg: 'bg-emerald-50' },
-    { border: 'border-amber-500', bg: 'bg-amber-500', text: 'text-amber-700', lightBg: 'bg-amber-50' },
-    { border: 'border-rose-500', bg: 'bg-rose-500', text: 'text-rose-700', lightBg: 'bg-rose-50' },
-    { border: 'border-cyan-500', bg: 'bg-cyan-500', text: 'text-cyan-700', lightBg: 'bg-cyan-50' }
-];
+import { CHUNK_THEMES } from './theme';
 
 interface StoryEditorSidebarProps {
     chunks: ChunkData[];
@@ -55,7 +46,8 @@ const StoryEditorSidebar: React.FC<StoryEditorSidebarProps> = ({
 
     const renderContent = (compactMode: boolean) => (
       <>
-        <div className={`bg-slate-50 border-b border-slate-100 relative ${compactMode ? 'flex justify-center p-4' : 'p-6'}`}>
+        {/* Header & Settings Section - Flex Shrink 0 to prevent crushing */}
+        <div className={`bg-slate-50 border-b border-slate-100 relative shrink-0 ${compactMode ? 'flex justify-center p-4' : 'p-6'}`}>
              {!compactMode ? (
                  <div className="space-y-4">
                     <div>
@@ -68,7 +60,7 @@ const StoryEditorSidebar: React.FC<StoryEditorSidebarProps> = ({
                         </div>
 
                         {/* EXPANDABLE SETTINGS PANEL */}
-                        <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm mt-3">
+                        <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm mt-3 transition-all duration-300">
                             <div 
                                 className="p-3 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors bg-white"
                                 onClick={() => setIsSettingsOpen(!isSettingsOpen)}
@@ -163,8 +155,8 @@ const StoryEditorSidebar: React.FC<StoryEditorSidebarProps> = ({
              )}
         </div>
         
-        {/* CHUNK METER LIST */}
-        <div className={`flex-1 overflow-y-auto bg-slate-50/50 custom-scrollbar ${compactMode ? 'px-1' : 'p-4 space-y-3'}`}>
+        {/* CHUNK METER LIST - IMPORTANT: min-h-0 allows nested flex scroll to work properly */}
+        <div className={`flex-1 overflow-y-auto min-h-0 bg-slate-50/50 custom-scrollbar ${compactMode ? 'px-1' : 'p-4 space-y-3'}`}>
              {chunks.map((chunk, idx) => {
                  const theme = CHUNK_THEMES[idx % CHUNK_THEMES.length];
                  const isGreen = chunk.isSynced;
@@ -212,7 +204,8 @@ const StoryEditorSidebar: React.FC<StoryEditorSidebarProps> = ({
              )}
         </div>
         
-        <div className={`p-4 bg-white border-t border-slate-100 ${compactMode ? 'flex justify-center' : ''}`}>
+        {/* Footer/Share Button - Shrink 0 */}
+        <div className={`p-4 bg-white border-t border-slate-100 shrink-0 ${compactMode ? 'flex justify-center' : ''}`}>
              {!compactMode ? (
                  <button onClick={onTriggerShare} className="w-full text-left bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-lg rounded-[1.5rem] p-4 transition-all group">
                     <div className="flex items-center space-x-4"><div className="shrink-0 group-hover:scale-105 transition-transform"><AppLogo variant="sunWindow" className="w-16 h-16" /></div><div><h2 className="text-xl font-serif font-bold text-slate-900 group-hover:text-indigo-700 transition-colors">Dela oändligt</h2><p className="text-[10px] text-slate-500 font-medium mt-1 uppercase tracking-wider">Tryck för att dela</p></div><div className="ml-auto text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-1 transition-all"><i className="fas fa-chevron-right text-lg"></i></div></div>
@@ -231,7 +224,7 @@ const StoryEditorSidebar: React.FC<StoryEditorSidebarProps> = ({
                 {renderContent(isCompact)}
                 
                 {/* Overlay logic for desktop compact mode */}
-                {isCompact && isMobileExpanded && ( // Reuse isMobileExpanded state for overlay trigger on desktop if desired, or simpler logic
+                {isCompact && isMobileExpanded && (
                     <div className="absolute top-0 right-full w-80 h-full bg-white border-r border-slate-200 shadow-2xl z-30 flex flex-col animate-in slide-in-from-right-4">
                         <div className="flex justify-end p-2 border-b border-slate-100">
                              <button onClick={() => setIsMobileExpanded(false)} className="text-slate-400 hover:text-slate-600 p-2"><i className="fas fa-times"></i></button>
