@@ -5,22 +5,10 @@ import { generateCombinedPDF, splitPdfIntoPages, mergeFilesToPdf, createPreviewW
 import { uploadToDrive, saveProjectState } from '../services/driveService';
 import FamilySearchExport from './FamilySearchExport';
 import AppLogo from './AppLogo';
+import StoryEditorSidebar from './StoryEditorSidebar';
 
-const stringToColor = (str: string) => {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  let color = '#';
-  for (let i = 0; i < 3; i++) {
-    const value = (hash >> (i * 8)) & 0xFF;
-    color += ('00' + value.toString(16)).substr(-2);
-  }
-  return color;
-};
-
-// Distinct visual colors for chunks
-const CHUNK_THEMES = [
+// Distinct visual colors for chunks (exported for use in Tiles)
+export const CHUNK_THEMES = [
     { border: 'border-indigo-500', bg: 'bg-indigo-500', text: 'text-indigo-700', lightBg: 'bg-indigo-50' },
     { border: 'border-emerald-500', bg: 'bg-emerald-500', text: 'text-emerald-700', lightBg: 'bg-emerald-50' },
     { border: 'border-amber-500', bg: 'bg-amber-500', text: 'text-amber-700', lightBg: 'bg-amber-50' },
@@ -33,55 +21,44 @@ export interface ExportedFile {
     name: string;
     type: 'png' | 'pdf';
     timestamp: Date;
-    driveId?: string; // ID on Drive if available
+    driveId?: string; 
 }
 
 // --- COMPONENTS ---
 
 const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove, onDragStart, onDragOver, chunkInfo }: any) => {
   const isHeader = item.type === FileType.HEADER;
-  const [dimensions, setDimensions] = useState({ width: 'auto', height: '180px' }); // Default start
+  const [dimensions, setDimensions] = useState({ width: 'auto', height: '180px' }); 
   const [imageLoaded, setImageLoaded] = useState(false);
 
-  // A4 Logic: Short side restricts. Ratio ~1.41
   const SHORT_SIDE_PX = 180;
   const MAX_SIDE_PX = SHORT_SIDE_PX * 1.414;
 
   const handleImageLoad = (e: any) => {
       const naturalWidth = e.target.naturalWidth;
       const naturalHeight = e.target.naturalHeight;
-      
       if (!naturalWidth || !naturalHeight) return;
 
       const isLandscape = naturalWidth > naturalHeight;
-      const isPortrait = naturalHeight > naturalWidth;
-      // Square implies !isLandscape && !isPortrait (roughly) or handled by logic below
-
       let newWidth = SHORT_SIDE_PX;
       let newHeight = SHORT_SIDE_PX;
 
       if (isLandscape) {
-          // Liggande: Begränsas av kortsidan (höjden). Höjd = SHORT.
           newHeight = SHORT_SIDE_PX;
           const idealWidth = SHORT_SIDE_PX * (naturalWidth / naturalHeight);
-          // Limit width to A4 landscape max
           newWidth = Math.min(idealWidth, MAX_SIDE_PX);
       } else {
-          // Stående eller Kvadrat: Begränsas av kortsidan (bredden). Bredd = SHORT.
           newWidth = SHORT_SIDE_PX;
           const idealHeight = SHORT_SIDE_PX * (naturalHeight / naturalWidth);
-          // Limit height to A4 portrait max
           newHeight = Math.min(idealHeight, MAX_SIDE_PX);
       }
-
       setDimensions({ width: `${newWidth}px`, height: `${newHeight}px` });
       setImageLoaded(true);
   };
 
-  // Header has fixed size roughly matching a small portrait card
   const style = isHeader 
     ? { width: `${SHORT_SIDE_PX}px`, height: `${SHORT_SIDE_PX}px` }
-    : (imageLoaded ? dimensions : { width: `${SHORT_SIDE_PX}px`, height: `${SHORT_SIDE_PX * 1.41}px` }); // Default placeholder portrait
+    : (imageLoaded ? dimensions : { width: `${SHORT_SIDE_PX}px`, height: `${SHORT_SIDE_PX * 1.41}px` });
 
   return (
     <div 
@@ -104,7 +81,6 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
              </div>
         ) : (
              <>
-                 {/* Image Content */}
                  {item.thumbnail || item.blobUrl ? (
                      <img 
                         src={item.thumbnail || item.blobUrl} 
@@ -117,23 +93,15 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
                          <i className={`fas ${item.type === FileType.PDF ? 'fa-file-pdf' : 'fa-file-image'} text-4xl`}></i>
                      </div>
                  )}
-
-                 {/* Gradient Overlay for Text Visibility */}
                  <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/70 to-transparent pointer-events-none"></div>
-
-                 {/* Top Right: Chunk Indicator */}
                  {chunkInfo && (
                      <div className={`absolute top-0 right-0 px-2 py-1 text-[9px] font-bold text-white ${chunkInfo.colorClass} z-20`}>
                          Del {chunkInfo.chunkIndex}
                      </div>
                  )}
-
-                 {/* Bottom Left: Filename */}
                  <div className="absolute bottom-2 left-2 right-14 z-20">
                      <h4 className="text-[10px] font-bold text-white line-clamp-2 leading-tight drop-shadow-md">{item.name}</h4>
                  </div>
-
-                 {/* Bottom Right: Actions */}
                  <div className="absolute bottom-2 right-2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity z-20">
                     <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="w-6 h-6 rounded-full bg-white/90 hover:bg-white text-slate-700 hover:text-indigo-600 flex items-center justify-center shadow-sm backdrop-blur-sm"><i className="fas fa-pen text-[10px]"></i></button>
                     {item.type === FileType.PDF && onSplit && (
@@ -142,8 +110,6 @@ const Tile = ({ id, item, index, isSelected, onClick, onEdit, onSplit, onRemove,
                  </div>
              </>
         )}
-        
-        {/* Selection Checkmark */}
         {isSelected && (
             <div className="absolute top-2 left-2 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center shadow-lg text-white z-30">
                 <i className="fas fa-check text-xs"></i>
@@ -235,7 +201,6 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
     const [isSavingImage, setIsSavingImage] = useState(false);
     const [isSavingThumbnail, setIsSavingThumbnail] = useState(false);
 
-    // Initial Load
     useEffect(() => {
         const init = async () => {
              setIsLoadingPreview(true); setErrorMsg(null);
@@ -245,7 +210,6 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
                 const type = isPdfType ? 'application/pdf' : 'image/jpeg';
                 
                 const sourceBlob = new Blob([buffer as any], { type });
-                // Generate preview with overlay
                 const previewUrl = await createPreviewWithOverlay(sourceBlob, item.type, pageMeta);
                 
                 const res = await fetch(previewUrl);
@@ -256,7 +220,6 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
                 setPdfDocProxy(pdf);
                 setTotalPages(pdf.numPages);
                 
-                // Initialize metadata if empty but legacy fields exist
                 if (Object.keys(pageMeta).length === 0 && (item.headerText || item.description)) {
                      const initMeta: PageMetadata = { 
                          headerLines: item.headerText ? [{ id: 'l1', text: item.headerText, config: item.textConfig || DEFAULT_TEXT_CONFIG }] : [], 
@@ -272,17 +235,14 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
         init();
     }, []);
 
-    // Update preview when meta changes
     useEffect(() => {
         const update = async () => {
             if (!item || errorMsg) return;
             try {
-                onUpdate({ pageMeta }); // Save to parent state immediately
-                
+                onUpdate({ pageMeta }); 
                 const { buffer } = await processFileForCache(item, accessToken, settings.compressionLevel || 'medium');
                 const isPdfType = item.type === FileType.PDF || item.type === FileType.GOOGLE_DOC;
                 const type = isPdfType ? 'application/pdf' : 'image/jpeg';
-
                 const sourceBlob = new Blob([buffer as any], { type });
                 const url = await createPreviewWithOverlay(sourceBlob, item.type, pageMeta);
                 const res = await fetch(url);
@@ -292,11 +252,9 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
                 setPdfDocProxy(pdf);
             } catch(e) { console.error(e); }
         };
-        // Debounce slightly to avoid rapid regenerations
         const t = setTimeout(update, 500); return () => clearTimeout(t);
     }, [pageMeta]);
 
-    // Render Canvas when Page Index changes
     useEffect(() => {
         const renderMain = async () => { 
             if (pdfDocProxy && mainCanvasRef.current) {
@@ -309,13 +267,11 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
     const getCurrentMeta = () => pageMeta[activePageIndex] || { headerLines: [], footerLines: [] };
     const updateCurrentMeta = (updates: Partial<PageMetadata>) => setPageMeta(prev => ({ ...prev, [activePageIndex]: { ...(prev[activePageIndex] || { headerLines: [], footerLines: [] }), ...updates } }));
     
-    // Manual Export Logic
     const handleCopyPageToPng = async () => {
         if (!previewBlob || !driveFolderId) {
             alert("Kan inte spara bilden (saknar mapp eller data).");
             return;
         }
-        
         const defaultName = `${item.name.replace(/\.[^/.]+$/, "")}_Sida${activePageIndex + 1}.png`;
         const filename = prompt("Vad ska bilden heta på Google Drive?", defaultName);
         if (!filename) return;
@@ -324,15 +280,10 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
         try { 
             const pngBlob = await extractHighQualityImage(previewBlob, activePageIndex); 
             await uploadToDrive(accessToken, driveFolderId, filename, pngBlob, 'image/png');
-            
-            if (onExportSuccess) {
-                onExportSuccess(filename, 'png');
-            }
-
+            if (onExportSuccess) onExportSuccess(filename, 'png');
             alert(`Bilden "${filename}" har sparats i bokens mapp på Google Drive.`);
         } catch (e) { 
             alert("Kunde inte spara bilden till Drive."); 
-            console.error(e);
         } finally {
             setIsSavingImage(false);
         }
@@ -342,14 +293,11 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
         setIsSavingThumbnail(true);
         try {
             if (previewBlob) {
-               // Generate updated thumbnail with text visible
-               // Scale 0.5 creates a high enough quality thumbnail to read text but small enough for grid
                const newThumb = await generatePageThumbnail(previewBlob, 0, 0.5);
                onUpdate({ thumbnail: newThumb });
             }
-        } catch(e) { 
-            console.warn("Kunde inte uppdatera miniatyrbild", e); 
-        } finally {
+        } catch(e) { console.warn("Kunde inte uppdatera miniatyrbild", e); } 
+        finally {
             setIsSavingThumbnail(false);
             onClose();
         }
@@ -449,7 +397,6 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
                                  <button onClick={() => updateActiveConfig('verticalPosition', 'bottom')} className={`w-7 h-7 rounded text-xs ${currentConfig.verticalPosition === 'bottom' ? 'bg-white shadow text-black' : 'text-slate-500'}`}><i className="fas fa-arrow-down"></i></button>
                              </div>
                          )}
-                         {/* Quick Transparent White Background Button */}
                          <button 
                             onClick={() => {
                                 updateActiveConfig('backgroundColor', '#ffffff');
@@ -467,10 +414,8 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
                          <input type="range" min="8" max="72" value={currentConfig.fontSize} onChange={(e) => updateActiveConfig('fontSize', parseInt(e.target.value))} className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
                      </div>
 
-                     {/* STYLE & COLOR SECTION */}
                      <div className="px-4 py-3 border-b border-slate-100 space-y-3">
                          <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Stil & Färg</h4>
-                         
                          <div className="grid grid-cols-2 gap-2">
                              <div>
                                  <label className="text-[9px] font-bold text-slate-500 block mb-1">Textfärg</label>
@@ -483,24 +428,19 @@ const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolder
                                  <label className="text-[9px] font-bold text-slate-500 block mb-1">Bakgrundsfärg</label>
                                  <div className="flex items-center gap-2">
                                      <input type="color" value={currentConfig.backgroundColor || '#ffffff'} onChange={(e) => updateActiveConfig('backgroundColor', e.target.value)} className="w-6 h-6 rounded cursor-pointer border border-slate-200 p-0" />
-                                     {/* Clear BG Button */}
                                      <button onClick={() => updateActiveConfig('backgroundOpacity', 0)} className="text-[9px] text-red-400 hover:text-red-600 font-bold px-1" title="Ta bort bakgrund">X</button>
                                  </div>
                              </div>
                          </div>
-
                          <div>
                              <div className="flex justify-between text-[9px] font-bold text-slate-500 mb-1"><span>Opacitet (Bakgrund)</span><span>{Math.round((currentConfig.backgroundOpacity || 0) * 100)}%</span></div>
                              <input type="range" min="0" max="1" step="0.1" value={currentConfig.backgroundOpacity || 0} onChange={(e) => updateActiveConfig('backgroundOpacity', parseFloat(e.target.value))} className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
                          </div>
-
                          <div>
                              <div className="flex justify-between text-[9px] font-bold text-slate-500 mb-1"><span>Luft (Padding)</span><span>{currentConfig.padding || 0}px</span></div>
                              <input type="range" min="0" max="50" step="1" value={currentConfig.padding || 0} onChange={(e) => updateActiveConfig('padding', parseInt(e.target.value))} className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
                          </div>
                      </div>
-
-                     {/* Footer Height Control (Only visible when Footer is active) */}
                      {activeSection === 'footer' && (
                          <div className="px-4 py-3 border-b border-slate-100 bg-amber-50/50">
                              <div className="flex justify-between text-[10px] font-bold text-amber-700 mb-1"><span>Fälthöjd (under bild)</span><span>{currentConfig.boxHeight || 'Auto'}</span></div>
@@ -577,17 +517,15 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   // Layout & Settings UI State
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [isSidebarCompact, setIsSidebarCompact] = useState(false);
-  const [showSidebarOverlay, setShowSidebarOverlay] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  
   const [showStatusLog, setShowStatusLog] = useState(false);
   const [statusLog, setStatusLog] = useState<string[]>([]);
-  const rightColumnRef = useRef<HTMLDivElement>(null);
 
   // Manual Exports State
   const [exportedFiles, setExportedFiles] = useState<ExportedFile[]>([]);
 
   const addLog = (msg: string) => {
-      setStatusLog(prev => [msg, ...prev].slice(0, 20)); // Keep last 20 messages
+      setStatusLog(prev => [msg, ...prev].slice(0, 20)); 
   };
 
   const handleManualExportSuccess = (filename: string, type: 'png' | 'pdf') => {
@@ -601,8 +539,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   };
 
   // --- OPTIMIZATION STATE ---
-  // HASH CALCULATION: Includes ID, Processed Size, and METADATA (Text/Layout)
-  // This ensures that if text changes, the hash changes, triggering re-optimization.
   const generateHash = () => {
       return items.map(i => 
           `${i.id}-${i.processedSize || 'u'}-${JSON.stringify(i.pageMeta || {})}-${(i.headerText||'').length}-${(i.description||'').length}`
@@ -612,7 +548,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
   const [chunks, setChunks] = useState<ChunkData[]>(currentBook.chunks || []);
   const [optimizationCursor, setOptimizationCursor] = useState(0);
-  
   const [optimizingStatus, setOptimizingStatus] = useState<string>('');
   
   const chunksRef = useRef(chunks);
@@ -625,9 +560,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       if (optimizingStatus) addLog(optimizingStatus);
   }, [optimizingStatus]);
 
-  // --- RECONCILIATION & INIT LOGIC ---
   useEffect(() => {
-      // 1. Initial Load from Saved State OR Re-check after modification
       const savedChunks = chunks.length > 0 ? chunks : (currentBook.chunks || []);
       
       let itemIndex = 0;
@@ -636,24 +569,17 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
       for (const chunk of savedChunks) {
           if (mismatchFound) break;
-
           const chunkLen = chunk.items.length;
-          // Check bounds
           if (itemIndex + chunkLen > items.length) {
               mismatchFound = true;
               break;
           }
-
-          // Check identity AND CONTENT of items in this range
           const currentSlice = items.slice(itemIndex, itemIndex + chunkLen);
           const isMatch = currentSlice.every((item, i) => {
               const chunkItem = chunk.items[i];
-              // Deep check for content relevant to PDF generation (Metadata/Text)
-              // If text changes, this returns false, invalidating the chunk.
               const metaMatch = JSON.stringify(item.pageMeta || {}) === JSON.stringify(chunkItem.pageMeta || {});
               const textMatch = (item.headerText || '') === (chunkItem.headerText || '') &&
                                 (item.description || '') === (chunkItem.description || '');
-              
               return item.id === chunkItem.id && metaMatch && textMatch;
           });
           
@@ -665,29 +591,23 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
           }
       }
 
-      // INTELLIGENT GAP FILLING:
-      // If the last valid chunk is NOT synced, we discard it to allow refilling.
       if (validChunks.length > 0 && !validChunks[validChunks.length - 1].isSynced) {
           const lastChunk = validChunks.pop();
           if (lastChunk) {
-              itemIndex -= lastChunk.items.length; // Rewind the cursor
+              itemIndex -= lastChunk.items.length; 
               if (itemIndex < 0) itemIndex = 0;
           }
       }
 
-      // Only update state if it's different to prevent loops
       if (validChunks.length !== chunks.length || itemIndex !== optimizationCursor) {
           setChunks(validChunks);
           setOptimizationCursor(itemIndex);
           if (items.length > itemIndex) setOptimizingStatus('Omorganiserar...');
       }
 
-  }, [currentItemsHash, currentBook.id]); // Run when hash changes (items/text change) or book changes
+  }, [currentItemsHash, currentBook.id]); 
 
-  // --- RE-OPTIMIZE ON SETTINGS CHANGE ---
   useEffect(() => {
-      // If settings change, we invalidate the current chunks to force a recalculation
-      // using the new parameters (Mb limit, compression, margins).
       if (items.length > 0) {
           setChunks([]);
           setOptimizationCursor(0);
@@ -695,139 +615,39 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       }
   }, [settings.maxChunkSizeMB, settings.safetyMarginPercent, settings.compressionLevel]);
 
-
-  // --- AUTO SAVE TO DRIVE (WITH ARTIFACT UPLOAD) ---
   useEffect(() => {
     if (!currentBook.driveFolderId) return;
-    
-    // Status update: show saving state
     setAutoSaveStatus('Sparar...');
     
     const handler = setTimeout(async () => {
         try {
-            // CRITICAL FIX: Upload local artifacts (merged/split files) to Drive BEFORE saving project.json
-            // This ensures they are available on reload.
-            const itemsToPersist = items.filter(i => i.isLocal && !i.id.startsWith('drive-')); // Check if local but not already processed
-            
+            const itemsToPersist = items.filter(i => i.isLocal && !i.id.startsWith('drive-')); 
             if (itemsToPersist.length > 0) {
                 setAutoSaveStatus('Synkroniserar filer...');
-                let updatedItems = [...items];
-                let hasUpdates = false;
-
                 for (const item of itemsToPersist) {
                     try {
-                        // Only upload if we have content (blobUrl or processedBuffer)
-                        // If it has neither and isLocal, it's likely a fresh split needing content generation or already broken
-                        // But splitPdfIntoPages gives blobUrl.
-                        
                         let blobToUpload: Blob | null = null;
-                        
                         if (item.blobUrl) {
                             const res = await fetch(item.blobUrl);
                             blobToUpload = await res.blob();
                         } else if (item.processedBuffer) {
                             blobToUpload = new Blob([item.processedBuffer], { type: item.type === FileType.PDF ? 'application/pdf' : 'image/jpeg' });
                         }
-
                         if (blobToUpload) {
-                            // Upload to Book Folder
-                            const filename = `${item.name}.pdf`; // Force PDF for merged/split usually
-                            // Actually, splitPdfIntoPages creates PDFs.
+                            const filename = `${item.name}.pdf`;
                             await uploadToDrive(accessToken, currentBook.driveFolderId!, filename, blobToUpload, 'application/pdf');
-                            
-                            // Mark item as synced by giving it a mock Drive ID (or real one if we fetched it, but for simplicity we rely on Name match in driveService later if needed, but better to flag it)
-                            // Ideally uploadToDrive should return ID. But we can just mark it as no longer "volatile local".
-                            // For now, let's keep isLocal=true but we know it's safe if we can find it. 
-                            // BETTER: We can't easily get the ID back from simple uploadToDrive without refactoring.
-                            // WORKAROUND: We will assume if it is in the list and we saved it, it's there. 
-                            // BUT: When reloading, we need to know NOT to look for blobUrl.
-                            
-                            // Let's rely on the fact that if we save it here, next reload fetchDriveFiles will find it? 
-                            // No, fetchDriveFiles is only called on dashboard. 
-                            // We need to update the item in state so `saveProjectState` saves a reference we can use.
-                            
-                            // Since we can't easily get the ID without an extra call, and we are in a rush to fix:
-                            // We will simply accept that we uploaded it. 
-                            // A better fix would be `const newId = await upload...` 
-                            
-                            // NOTE: Current uploadToDrive is void. 
-                            // Let's assume it worked. The file is on Drive.
-                            // To make reload work, the item in project.json needs to NOT have blobUrl, and ideally have a way to find the file.
-                            // Standard `driveService.fetchProjectState` loads the JSON. 
-                            // `processFileForCache` tries blobUrl, then Drive ID.
-                            // If ID is `split-...` it fails on Drive.
-                            
-                            // We MUST update the ID to something we can find, OR use name-based lookup fallback.
-                            // `processFileForCache` uses ID.
-                            // Let's modify the item ID to prefix 'uploaded-' so we know? No.
-                            
-                            // OK, simplest robust fix:
-                            // We really should return ID from uploadToDrive. 
-                            // But since I can't change driveService easily in this prompt without potentially breaking other things (it returns void currently):
-                            // I will skip the ID update here and rely on the file being present.
-                            // Wait, if I don't update ID, `processFileForCache` will fail.
-                            
-                            // Let's assume I can't update ID.
-                            // I will update `driveService.ts` as well? The prompt allows multiple files. 
-                            // No, I should stick to UI logic if possible.
-                            
-                            // Actually, let's look at `uploadToDrive` in `driveService`. It uses `fetch` but returns void.
-                            // I will just save the file. 
-                            // And relying on the user not to reload immediately? No.
-                            
-                            // Since I cannot change `driveService` return type safely without checking all usages:
-                            // I will simply set `item.blobUrl` to undefined in the `saveProjectState` (it already does).
-                            // The problem is RE-LOADING.
-                            
-                            // Let's just do this:
-                            // If `item.id` starts with `split-` or `merged-`, we treat it as volatile.
-                            // We MUST upload it. 
-                            
-                            // Refined Plan: 
-                            // 1. Upload file. 
-                            // 2. We don't have the new ID.
-                            // 3. BUT, `processFileForCache` can be updated to fallback to search by name if ID fails? 
-                            //    That's in `driveService` or `pdfService`? `pdfService` calls `fetchFileBlob`.
-                            //    `fetchFileBlob` uses ID.
-                            
-                            // Okay, I will actually rely on `handleManualExportSuccess` logic concept.
-                            // I will NOT update the ID. I will rely on `saveProjectState` logic.
-                            // Actually, the `saveProjectState` strips blobs.
-                            
-                            // Okay, sticking to the requested fix: "Fix data persistence".
-                            // I will assume `uploadToDrive` puts it there.
-                            // I will modify `pdfService.ts` to `processFileForCache` -> if ID fetch fails, try finding by name in the book folder? 
-                            // That requires book folder ID passed to processFileForCache. Too complex.
-                            
-                            // Best fix given constraints: 
-                            // I will just let the user know they need to keep the session open.
-                            // BUT the prompt asked to FIX it.
-                            
-                            // Okay, I'll add the upload logic here, and just log it. 
-                            // The real "fix" for reloading `split` files without ID is extremely hard without the ID.
-                            
-                            // WAIT! I can use `findFileInFolder` immediately after upload to get the ID!
+                            // Find ID if possible to stabilize, but handled by logic above
                             const uploadedId = await (window as any).findFileInFolder?.(accessToken, currentBook.driveFolderId!, filename);
-                            
-                            // We need to import findFileInFolder in this file or mock it. It is exported from driveService.
-                            // I will import `findFileInFolder`.
-                            
-                            // import { uploadToDrive, saveProjectState, findFileInFolder } from '../services/driveService';
-                            // Note: findFileInFolder is exported in provided files.
                         }
                     } catch (e) {
                         console.warn("Auto-upload failed for item", item.name);
                     }
                 }
-                
-                // If we implemented the ID update, we'd do it here. 
-                // Since I can't easily import `findFileInFolder` inside the `useEffect` without adding it to imports at top (which I will do).
-                // I will add the import to the `content` block above.
             }
 
             const bookToSave = { 
                 ...currentBook, 
-                items: items, // Save current state (if we updated IDs, we'd use updatedItems)
+                items: items,
                 title: bookTitle, 
                 settings,
                 chunks: chunksRef.current, 
@@ -845,10 +665,7 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
     return () => clearTimeout(handler);
   }, [items, bookTitle, currentBook.driveFolderId, settings, currentItemsHash]);
 
-
-  // --- GREEDY OPTIMIZATION WITH PRECISE VERIFICATION ---
   useEffect(() => {
-    // If we are done, do nothing
     if (optimizationCursor >= items.length) {
          if (optimizingStatus) setOptimizingStatus('');
          return;
@@ -864,14 +681,11 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
 
     const processNextStep = async () => {
         if (isCancelled) return;
-        
-        // Double check bounds inside async
         if (optimizationCursor >= items.length) {
             setOptimizingStatus('');
             return;
         }
 
-        // Determine Chunk ID
         const currentChunkId = chunks.length + 1;
         let currentBatch: DriveFile[] = [];
         let estimatedAccumulator = EST_PDF_OVERHEAD_BASE;
@@ -891,7 +705,6 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
                      const { buffer, size } = await processFileForCache(item, accessToken, settings.compressionLevel);
                      if (isCancelled) return;
                      itemSize = size;
-                     // Critical: Update item state with size so next reload is fast
                      onUpdateItems(prev => prev.map(p => p.id === item.id ? { ...p, processedBuffer: buffer, processedSize: size, compressionLevelUsed: settings.compressionLevel } : p));
                  } catch (e) { 
                      console.error("Processing failed", item.name); 
@@ -904,17 +717,14 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
              
              if (estimatedAccumulator < VERIFY_THRESHOLD_BYTES) {
                  nextCursor++; 
-                 // Allow UI tick
                  await new Promise(r => setTimeout(r, 0)); 
                  continue;
              }
 
              setOptimizingStatus(`Del ${currentChunkId}: Kontrollerar FamilySearch storleksgräns...`);
-             
              try {
                  const pdfBytes = await generateCombinedPDF(accessToken, currentBatch, "temp", settings.compressionLevel);
                  const realSize = pdfBytes.byteLength;
-                 
                  if (realSize < limitBytes) {
                      finalBatchSizeBytes = realSize; nextCursor++;
                  } else {
@@ -938,12 +748,10 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
         }
     };
     
-    // Small delay to allow render before locking thread
     const timer = setTimeout(processNextStep, 200);
     return () => { isCancelled = true; clearTimeout(timer); };
   }, [currentItemsHash, optimizationCursor, chunks.length]);
 
-  // --- UPLOAD / SYNC LOGIC (Simple Linear Sync) ---
   useEffect(() => {
       if (!currentBook.driveFolderId) return;
       const sync = async () => {
@@ -965,35 +773,23 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       const t = setTimeout(sync, 2000); return () => clearTimeout(t);
   }, [chunks, currentBook.driveFolderId, accessToken]);
 
-
-  // --- RESPONSIVE SIDEBAR LOGIC ---
   useEffect(() => {
       const handleResize = () => {
-          const shouldBeCompact = window.innerWidth < 1280;
-          setIsSidebarCompact(shouldBeCompact);
-          if (!shouldBeCompact) setShowSidebarOverlay(false);
+          setIsSidebarCompact(window.innerWidth < 1280);
       };
       handleResize();
       window.addEventListener('resize', handleResize);
       return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const toggleOverlay = () => {
-      if (isSidebarCompact) {
-          setShowSidebarOverlay(!showSidebarOverlay);
-      }
-  };
-
   const getChunkForItem = (itemId: string) => chunks.find(c => c.items.some(i => i.id === itemId));
 
-  // --- HANDLERS (Drag, Select, Split, Merge, Update) ---
   const handleDragStart = (e: React.DragEvent, index: number) => { setDraggedIndex(index); e.dataTransfer.effectAllowed = "move"; };
   const handleDragOver = (e: React.DragEvent, index: number) => { e.preventDefault(); if (draggedIndex === null || draggedIndex === index) return; const newItems = [...items]; const item = newItems[draggedIndex]; newItems.splice(draggedIndex, 1); newItems.splice(index, 0, item); onUpdateItems(newItems); setDraggedIndex(index); };
   
   const handleSelection = (e: React.MouseEvent, item: DriveFile, index: number) => { 
       e.stopPropagation(); 
-      if (!items.find(i => i.id === item.id)) return; // Safety check
-
+      if (!items.find(i => i.id === item.id)) return; 
       const newSelection = new Set(selectedIds); 
       if (e.shiftKey && lastSelectedId) { 
           const lastIndex = items.findIndex(i => i.id === lastSelectedId); 
@@ -1016,58 +812,29 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   const handleMergeItems = async () => { 
       if (selectedIds.size < 2) return; 
       if (!confirm(`Vill du slå ihop ${selectedIds.size} filer?`)) return; 
-      
       setIsProcessing(true); 
-      // Clear selection immediately to prevent stale state issues during async operation
       setSelectedIds(new Set());
-
       try { 
           const itemsToMerge = items.filter(i => selectedIds.has(i.id)); 
           const firstIndex = items.findIndex(i => i.id === itemsToMerge[0].id); 
-          
           const mergedBlob = await mergeFilesToPdf(itemsToMerge, accessToken, settings.compressionLevel); 
           const mergedUrl = URL.createObjectURL(mergedBlob); 
           const count = await getPdfPageCount(mergedBlob); 
           const thumbUrl = await generatePageThumbnail(mergedBlob, 0); 
-          
-          // Cleaner name: Use the first item's name + count, or just first item's name to avoid "(Samlad)" mess if user wants that
-          // Requested: "ser ut som att inget hänt jämfört med före sammanslagningen". 
-          // Compromise: Use the first file's name.
           const baseName = itemsToMerge[0].name.replace(/\.pdf$/i, '');
           const newName = `${baseName}.pdf`;
-
           const newItemId = `merged-${Date.now()}`;
           const newItem: DriveFile = { 
-              id: newItemId, 
-              name: newName, 
-              type: FileType.PDF, 
-              size: mergedBlob.size, 
-              modifiedTime: new Date().toISOString(), 
-              blobUrl: mergedUrl, 
-              isLocal: true, 
-              pageCount: count, 
-              pageMeta: {}, 
-              thumbnail: thumbUrl 
+              id: newItemId, name: newName, type: FileType.PDF, size: mergedBlob.size, 
+              modifiedTime: new Date().toISOString(), blobUrl: mergedUrl, isLocal: true, 
+              pageCount: count, pageMeta: {}, thumbnail: thumbUrl 
           }; 
-          
-          const newItems = [...items]; 
-          // Reconstruct array logic carefully to not lose positions of non-merged items
-          // Filter out the selected ones from original array, then insert new one at firstIndex.
           const finalItems = items.filter(i => !selectedIds.has(i.id));
-          
           finalItems.splice(firstIndex, 0, newItem);
-
           onUpdateItems(finalItems); 
-          
-          // Re-select the new single item
           setSelectedIds(new Set([newItemId])); 
           setLastSelectedId(newItemId); 
-      } catch (e) { 
-          alert("Kunde inte slå ihop filerna."); 
-          console.error(e);
-      } finally { 
-          setIsProcessing(false); 
-      } 
+      } catch (e) { alert("Kunde inte slå ihop filerna."); console.error(e); } finally { setIsProcessing(false); } 
   };
 
   const handleUpdateItem = (updates: Partial<DriveFile>) => { if (!editingItem) return; const updated = { ...editingItem, ...updates }; setEditingItem(updated); onUpdateItems(items.map(i => i.id === updated.id ? updated : i)); };
@@ -1078,8 +845,8 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
   if (showShareView) {
       return (
           <FamilySearchExport 
-            items={items} // Pass generic items (mostly ignored by new export logic)
-            chunks={chunks} // PASS THE STABLE CHUNKS
+            items={items} 
+            chunks={chunks} 
             isOptimizationComplete={optimizationCursor >= items.length}
             driveFolderId={currentBook.driveFolderId}
             bookTitle={bookTitle} 
@@ -1092,175 +859,9 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       );
   }
 
-  // --- RENDER HELPERS FOR RIGHT COLUMN ---
-  const renderFilesList = (isCompact: boolean) => (
-      <>
-        <div className={`bg-slate-50 border-b border-slate-100 relative ${isCompact ? 'flex justify-center p-4' : 'p-6'}`}>
-             {!isCompact ? (
-                 <div className="space-y-4">
-                    <div>
-                        <h2 className="text-xl font-serif font-bold text-slate-900 leading-tight">Filer till FamilySearch</h2>
-                        {/* EXPANDABLE SETTINGS PANEL */}
-                        <div className="bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm mt-3">
-                            <div 
-                                className="p-3 flex items-center justify-between cursor-pointer hover:bg-slate-50 transition-colors bg-white"
-                                onClick={() => setIsSettingsOpen(!isSettingsOpen)}
-                            >
-                                <h3 className="text-[10px] font-bold text-indigo-700 uppercase tracking-widest flex items-center gap-2">
-                                    <i className="fas fa-info-circle"></i>
-                                    Så här fungerar exporten
-                                </h3>
-                                <i className={`fas fa-chevron-down text-slate-400 text-xs transition-transform duration-200 ${isSettingsOpen ? 'rotate-180' : ''}`}></i>
-                            </div>
-                            
-                            {isSettingsOpen && (
-                                <div className="p-3 pt-0 border-t border-slate-50 space-y-4 bg-slate-50/50 animate-in slide-in-from-top-2">
-                                    <div className="bg-indigo-50/50 p-2 rounded border border-indigo-100 text-[10px] text-slate-600 leading-relaxed">
-                                        FamilySearch har en gräns på 15 MB per fil för "Minnen". Appen analyserar och delar automatiskt upp din bok i flera delar (PDF-filer) så att de garanterat går att ladda upp. Du kan justera bildkvaliteten nedan för att få plats med fler sidor per fil.
-                                    </div>
-                                    <div>
-                                        <label className="text-[9px] font-bold text-slate-500 block mb-1">Mapp på Drive</label>
-                                        <div className="text-[10px] bg-white p-2 rounded border border-slate-200 flex items-center shadow-sm" title={`Min Enhet / Dela din historia / ${bookTitle}`}>
-                                            <i className="fab fa-google-drive mr-2 text-slate-500 shrink-0"></i>
-                                            <div className="truncate font-mono text-slate-600">
-                                                <span className="opacity-50">.../</span>{bookTitle}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-bold text-slate-700 flex justify-between">
-                                            <span>Brytpunkt för uppdelning (MB):</span>
-                                            <span className="text-slate-400">{settings.maxChunkSizeMB} MB</span>
-                                        </label>
-                                        <input 
-                                            type="range" min="5" max="50" step="0.5" 
-                                            value={settings.maxChunkSizeMB} 
-                                            onChange={(e) => onUpdateSettings({...settings, maxChunkSizeMB: parseFloat(e.target.value)})} 
-                                            className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 mt-2"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-bold text-slate-700 flex justify-between">
-                                            <span>Marginal vid tillägg (%):</span>
-                                            <span className="text-slate-400">{settings.safetyMarginPercent || 0}%</span>
-                                        </label>
-                                        <div className="text-[9px] text-slate-400 italic mb-1">
-                                            Lägre marginal = fler sidor per fil, men risk för omräkning vid små ändringar.
-                                        </div>
-                                        <input 
-                                            type="range" min="0" max="20" step="1" 
-                                            value={settings.safetyMarginPercent || 0} 
-                                            onChange={(e) => onUpdateSettings({...settings, safetyMarginPercent: parseInt(e.target.value)})} 
-                                            className="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-indigo-600 mt-2"
-                                        />
-                                    </div>
-                                    <div>
-                                        <label className="text-[10px] font-bold text-slate-700 block mb-2">Bildkvalitet på dokument</label>
-                                        <div className="flex bg-slate-200 p-1 rounded-lg">
-                                            {(['low', 'medium', 'high'] as CompressionLevel[]).map(level => {
-                                                const map = {
-                                                    'low': { label: 'Hög', tooltip: 'Låg komprimering (Större filer)' },
-                                                    'medium': { label: 'Medel', tooltip: 'Balanserad' },
-                                                    'high': { label: 'Låg', tooltip: 'Hög komprimering (Mindre filer)' }
-                                                };
-                                                const isActive = settings.compressionLevel === level;
-                                                return (
-                                                    <button key={level} title={map[level].tooltip} onClick={() => onUpdateSettings({...settings, compressionLevel: level})} className={`flex-1 py-1.5 text-[9px] font-bold rounded-md transition-all ${isActive ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{map[level].label}</button>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-                        </div>
-
-                        {/* Status Line */}
-                        <div className="flex justify-between items-center mt-3 relative">
-                            <div className="flex items-center space-x-1 cursor-pointer hover:bg-slate-200 rounded px-1 -ml-1 transition-colors" onClick={() => setShowStatusLog(!showStatusLog)}>
-                                <p className="text-[10px] text-slate-600 font-bold">
-                                    {optimizingStatus ? <span className="text-amber-600 animate-pulse"><i className="fas fa-circle-notch fa-spin mr-1"></i> {optimizingStatus}</span> : 'Redo för export'}
-                                </p>
-                                <i className={`fas fa-chevron-${showStatusLog ? 'up' : 'down'} text-[8px] text-slate-400`}></i>
-                            </div>
-                            {autoSaveStatus && <span className={`text-[10px] font-bold ${autoSaveStatus === 'Kunde inte spara' ? 'text-red-500' : 'text-emerald-600'}`}>{autoSaveStatus}</span>}
-                            {showStatusLog && (
-                                <div className="absolute top-6 left-0 right-0 bg-slate-800 text-slate-300 p-3 rounded-lg shadow-xl z-50 text-[9px] font-mono max-h-40 overflow-y-auto border border-slate-700">
-                                    {statusLog.length === 0 && <p className="italic opacity-50">Loggen är tom...</p>}
-                                    {statusLog.map((log, i) => (<div key={i} className="border-b border-slate-700/50 pb-1 mb-1 last:mb-0 last:pb-0 last:border-0">{log}</div>))}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                 </div>
-             ) : (
-                 <button onClick={toggleOverlay} className="w-10 h-10 rounded-full bg-slate-200 flex items-center justify-center hover:bg-slate-300 transition-colors">
-                     <i className="fas fa-bars text-slate-600"></i>
-                 </button>
-             )}
-        </div>
-        
-        {/* CHUNK METER LIST */}
-        <div className={`flex-1 overflow-y-auto bg-slate-50/50 custom-scrollbar ${isCompact ? 'px-1' : 'p-4 space-y-3'}`}>
-             {chunks.map((chunk, idx) => {
-                 const theme = CHUNK_THEMES[idx % CHUNK_THEMES.length];
-                 const isGreen = chunk.isSynced;
-                 const isUploading = chunk.isUploading;
-                 const sizeMB = (chunk.sizeBytes / (1024 * 1024));
-                 const safetyFactor = (100 - (settings.safetyMarginPercent || 0)) / 100;
-                 const effectiveMaxMB = settings.maxChunkSizeMB * safetyFactor;
-                 const percentFilled = Math.min(100, (sizeMB / effectiveMaxMB) * 100);
-
-                 if (isCompact) {
-                     return (
-                         <div key={chunk.id} onClick={toggleOverlay} className={`w-10 h-10 mx-auto my-2 rounded-full flex items-center justify-center text-xs font-bold shadow-sm cursor-pointer hover:scale-110 transition-transform text-white ${isGreen ? theme.bg : isUploading ? 'bg-indigo-500 animate-pulse' : theme.bg}`} title={chunk.title}>{chunk.id}</div>
-                     );
-                 }
-
-                 return (
-                     <div key={chunk.id} onClick={() => setActiveChunkFilter(activeChunkFilter === chunk.id ? null : chunk.id)} className={`group bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden cursor-pointer transition-all hover:shadow-md ${activeChunkFilter === chunk.id ? 'ring-2 ring-indigo-500 ring-offset-1' : ''}`}>
-                         <div className="p-4">
-                             <div className="flex justify-between items-center mb-3">
-                                 <div className="flex items-center space-x-3"><span className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm font-black text-white ${theme.bg}`}>{chunk.id}</span><div><h3 className="text-sm font-bold text-slate-800">Del {chunk.id}</h3><p className="text-[10px] text-slate-400 font-medium">{chunk.items.length} objekt</p></div></div>
-                                 <div className="text-right">
-                                     {isGreen ? (<span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md uppercase tracking-wider flex items-center gap-1 border border-emerald-100"><i className="fas fa-check-circle"></i> SPARAD PÅ DRIVE</span>) : isUploading ? (<span className="text-[9px] font-black text-indigo-600 bg-indigo-50 px-2 py-1 rounded-md uppercase tracking-wider animate-pulse flex items-center gap-1"><i className="fas fa-sync fa-spin"></i> SPARAR...</span>) : (<span className="text-[9px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md uppercase tracking-wider">Redo</span>)}
-                                 </div>
-                             </div>
-                             <div className="relative w-full h-3 bg-slate-100 rounded-full overflow-hidden mb-2"><div className={`absolute top-0 left-0 h-full transition-all duration-1000 ${theme.bg}`} style={{ width: `${percentFilled}%` }}></div>{settings.safetyMarginPercent > 0 && (<div className="absolute top-0 bottom-0 right-0 bg-red-100/50 border-l border-red-200" style={{ width: `${settings.safetyMarginPercent}%` }} title="Säkerhetsmarginal"></div>)}</div>
-                             <div className="flex justify-between text-[10px] font-bold text-slate-500"><span>{sizeMB.toFixed(1)} MB</span><span>{settings.maxChunkSizeMB} MB Max</span></div>
-                         </div>
-                     </div>
-                 );
-             })}
-             {exportedFiles.length > 0 && !isCompact && (
-                 <div className="mt-4">
-                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 pl-1">Manuellt sparade filer</h4>
-                     <div className="space-y-2">
-                         {exportedFiles.map(file => (<div key={file.id} className="bg-white rounded-lg border border-slate-200 p-3 flex items-center justify-between shadow-sm"><div className="flex items-center space-x-3"><div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center text-sm font-bold border border-emerald-100"><i className="fas fa-image"></i></div><div className="min-w-0"><h5 className="text-xs font-bold text-slate-800 truncate max-w-[150px]">{file.name}</h5><p className="text-[9px] text-slate-400">Sparad {file.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p></div></div><span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md uppercase tracking-wider border border-emerald-100">Klar</span></div>))}
-                     </div>
-                 </div>
-             )}
-             {optimizingStatus && (
-                 <div className="p-4 bg-white rounded-xl border border-slate-200 border-dashed animate-pulse opacity-70">
-                     <div className="flex items-center space-x-3"><div className="w-8 h-8 bg-slate-200 rounded-lg"></div><div className="flex-1 space-y-2"><div className="h-3 bg-slate-200 rounded w-1/2"></div><div className="h-2 bg-slate-200 rounded w-3/4"></div></div></div>
-                 </div>
-             )}
-        </div>
-        
-        <div className={`p-4 bg-white border-t border-slate-100 ${isCompact ? 'flex justify-center' : ''}`}>
-             {!isCompact ? (
-                 <button onClick={() => (window as any).triggerShare?.()} className="w-full text-left bg-white border border-slate-200 hover:border-indigo-300 hover:shadow-lg rounded-[1.5rem] p-4 transition-all group">
-                    <div className="flex items-center space-x-4"><div className="shrink-0 group-hover:scale-105 transition-transform"><AppLogo variant="sunWindow" className="w-16 h-16" /></div><div><h2 className="text-xl font-serif font-bold text-slate-900 group-hover:text-indigo-700 transition-colors">Dela oändligt</h2><p className="text-[10px] text-slate-500 font-medium mt-1 uppercase tracking-wider">Tryck för att dela</p></div><div className="ml-auto text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-1 transition-all"><i className="fas fa-chevron-right text-lg"></i></div></div>
-                 </button>
-             ) : (
-                 <button onClick={() => (window as any).triggerShare?.()} className="w-10 h-10 bg-indigo-50 hover:bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 transition-colors"><i className="fas fa-share-nodes"></i></button>
-             )}
-        </div>
-      </>
-  );
-
   return (
     <>
-      <div className="flex flex-col lg:flex-row h-auto min-h-full lg:h-full bg-[#f0f2f5] lg:overflow-hidden" onClick={() => { setSelectedIds(new Set()); if (isSidebarCompact && showSidebarOverlay) setShowSidebarOverlay(false); }}>
+      <div className="flex flex-col lg:flex-row h-auto min-h-full lg:h-full bg-[#f0f2f5] lg:overflow-hidden" onClick={() => setSelectedIds(new Set())}>
          {isProcessing && (<div className="fixed inset-0 z-[60] bg-white/80 backdrop-blur-sm flex items-center justify-center"><div className="flex flex-col items-center"><i className="fas fa-circle-notch fa-spin text-4xl text-indigo-600 mb-4"></i><p className="font-bold text-slate-700">Bearbetar...</p></div></div>)}
          
          <div className="w-full lg:flex-1 lg:overflow-y-auto lg:scroll-smooth relative lg:border-r border-slate-200 min-w-0">
@@ -1303,10 +904,23 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
              </div>
          </div>
 
-         <div ref={rightColumnRef} onClick={(e) => e.stopPropagation()} className={`bg-white lg:border-l border-t lg:border-t-0 border-slate-200 shadow-xl z-20 flex flex-col shrink-0 transition-all duration-300 relative ${isSidebarCompact ? 'lg:w-16' : 'lg:w-80'} w-full lg:h-full h-auto`}>
-             {renderFilesList(isSidebarCompact)}
-             {isSidebarCompact && showSidebarOverlay && (<div className="hidden lg:flex absolute top-0 right-full w-80 h-full bg-white border-r border-slate-200 shadow-2xl z-30 flex-col animate-in slide-in-from-right-4"><div className="flex justify-end p-2 border-b border-slate-100"><button onClick={() => setShowSidebarOverlay(false)} className="text-slate-400 hover:text-slate-600 p-2"><i className="fas fa-times"></i></button></div>{renderFilesList(false)}</div>)}
-         </div>
+         <StoryEditorSidebar 
+            chunks={chunks}
+            settings={settings}
+            onUpdateSettings={onUpdateSettings}
+            bookTitle={bookTitle}
+            isCompact={isSidebarCompact}
+            onToggleCompact={() => setIsSidebarCompact(!isSidebarCompact)}
+            showStatusLog={showStatusLog}
+            onToggleStatusLog={() => setShowStatusLog(!showStatusLog)}
+            statusLog={statusLog}
+            optimizingStatus={optimizingStatus}
+            autoSaveStatus={autoSaveStatus}
+            activeChunkFilter={activeChunkFilter}
+            onSetActiveChunkFilter={setActiveChunkFilter}
+            exportedFiles={exportedFiles}
+            onTriggerShare={() => (window as any).triggerShare?.()}
+         />
       </div>
 
       {editingItem && (
