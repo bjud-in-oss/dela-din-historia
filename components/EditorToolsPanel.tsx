@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import AppLogo from './AppLogo';
 import { TextConfig, RichTextLine, PageMetadata } from '../types';
 import { DEFAULT_TEXT_CONFIG } from '../services/pdfService';
@@ -15,60 +15,6 @@ interface EditorToolsPanelProps {
     setFocusedLineId: (id: string | null) => void;
 }
 
-const RichTextListEditor = ({ lines, onChange, onFocusLine, focusedLineId, placeholder }: { lines: RichTextLine[], onChange: (l: RichTextLine[]) => void, onFocusLine: (id: string | null) => void, focusedLineId: string | null, placeholder: string }) => {
-    const handleTextChange = (id: string, newText: string) => onChange(lines.map(l => l.id === id ? { ...l, text: newText } : l));
-    const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            const newLine: RichTextLine = { id: `line-${Date.now()}`, text: '', config: { ...lines[index].config } };
-            const newLines = [...lines]; newLines.splice(index + 1, 0, newLine); onChange(newLines);
-        } else if (e.key === 'Backspace' && lines[index].text === '' && lines.length > 1) {
-            e.preventDefault(); onChange(lines.filter((_, i) => i !== index));
-        }
-    };
-    
-    if (lines.length === 0) return (
-        <button 
-            onClick={() => onChange([{ id: `init-${Date.now()}`, text: '', config: DEFAULT_TEXT_CONFIG }])} 
-            className="w-full py-4 border-2 border-dashed border-slate-300 rounded-lg text-slate-400 font-bold text-xs hover:border-indigo-400 hover:text-indigo-600 transition-all flex flex-col items-center gap-2"
-        >
-            <i className="fas fa-plus-circle text-lg"></i>
-            <span>Klicka för att lägga till text</span>
-        </button>
-    );
-
-    return (
-        <div className="space-y-3">
-            {lines.map((line, index) => (
-                <div key={line.id} className={`flex items-center group relative bg-white p-2 rounded-lg border transition-all ${focusedLineId === line.id ? 'border-indigo-400 ring-2 ring-indigo-50 shadow-md' : 'border-slate-200 hover:border-slate-300'}`}>
-                    <textarea 
-                        rows={1}
-                        value={line.text} 
-                        onChange={(e) => {
-                            handleTextChange(line.id, e.target.value);
-                            e.target.style.height = 'auto';
-                            e.target.style.height = e.target.scrollHeight + 'px';
-                        }} 
-                        onFocus={() => onFocusLine(line.id)} 
-                        onBlur={() => {}} 
-                        onKeyDown={(e) => handleKeyDown(e, index)} 
-                        className="w-full bg-transparent outline-none text-slate-800 transition-colors resize-none overflow-hidden" 
-                        style={{ 
-                            fontWeight: line.config.isBold ? 'bold' : 'normal', 
-                            fontStyle: line.config.isItalic ? 'italic' : 'normal', 
-                            fontSize: '14px', 
-                            textAlign: 'left',
-                            fontFamily: 'serif' 
-                        }} 
-                        placeholder={placeholder} 
-                    />
-                    <button onClick={() => onChange(lines.filter(l => l.id !== line.id))} className="ml-2 text-slate-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1" tabIndex={-1}><i className="fas fa-times"></i></button>
-                </div>
-            ))}
-        </div>
-    );
-};
-
 const EditorToolsPanel: React.FC<EditorToolsPanelProps> = ({
     activeSection,
     setActiveSection,
@@ -79,81 +25,121 @@ const EditorToolsPanel: React.FC<EditorToolsPanelProps> = ({
     focusedLineId,
     setFocusedLineId
 }) => {
-    // Default open to encourage usage
-    const [isStyleOpen, setIsStyleOpen] = useState(true); 
+    // Show settings toggle
+    const [showSettings, setShowSettings] = useState(false);
     const [isMobileExpanded, setIsMobileExpanded] = useState(false);
+    const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
     const activeLines = activeSection === 'header' ? pageMeta.headerLines : pageMeta.footerLines;
-    const setActiveLines = (lines: RichTextLine[]) => {
-        if (activeSection === 'header') updateCurrentMeta({ headerLines: lines });
-        else updateCurrentMeta({ footerLines: lines });
+
+    // Convert array of lines to single string for textarea
+    const textValue = (activeLines || []).map(l => l.text).join('\n');
+
+    // Handle typing in the textarea
+    const handleTextChange = (newFullText: string) => {
+        const textLines = newFullText.split('\n');
+        
+        // Map back to RichTextLine objects
+        // We reuse existing configs for indices that exist, or clone the current/first config for new lines
+        const newRichLines: RichTextLine[] = textLines.map((text, index) => {
+            const existingLine = activeLines && activeLines[index];
+            // If line exists, keep its ID and config. If not, create new.
+            // If it's the very first line being created, use DEFAULT_TEXT_CONFIG.
+            // If it's a new line appended, copy config from the previous line (so style continues).
+            const baseConfig = existingLine?.config || (activeLines && activeLines.length > 0 ? activeLines[activeLines.length-1].config : DEFAULT_TEXT_CONFIG);
+            
+            return {
+                id: existingLine?.id || `line-${Date.now()}-${index}`,
+                text: text,
+                config: baseConfig
+            };
+        });
+
+        if (activeSection === 'header') updateCurrentMeta({ headerLines: newRichLines });
+        else updateCurrentMeta({ footerLines: newRichLines });
     };
+
+    // Auto-focus logic
+    useEffect(() => {
+        if (isMobileExpanded || window.innerWidth >= 1024) {
+            // Small timeout to allow render/animation
+            const t = setTimeout(() => {
+                textAreaRef.current?.focus();
+                // Move cursor to end
+                const len = textAreaRef.current?.value.length || 0;
+                textAreaRef.current?.setSelectionRange(len, len);
+            }, 100);
+            return () => clearTimeout(t);
+        }
+    }, [activeSection, isMobileExpanded]);
 
     const renderContent = () => (
         <div className="flex flex-col h-full bg-slate-50">
-            {/* Header */}
-            <div className="p-4 border-b border-slate-200 flex items-center justify-between shrink-0 bg-white">
+            {/* Desktop Header / Mobile Handle */}
+            <div className="hidden lg:flex p-4 border-b border-slate-200 items-center justify-between shrink-0 bg-white">
                 <div className="flex items-center space-x-3">
                     <div className="shrink-0"><AppLogo variant="phase2" className="w-8 h-8" /></div>
                     <h3 className="font-bold text-slate-800 text-lg leading-tight">Redigera</h3>
                 </div>
-                <button onClick={() => setIsMobileExpanded(false)} className="lg:hidden p-2 text-slate-400 hover:text-slate-600">
-                    <i className="fas fa-chevron-down"></i>
-                </button>
             </div>
             
-            {/* Scrollable Content */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
+            {/* Main Controls Container - Scrollable */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
                 
-                {/* 1. Toggle Switch (Position) */}
-                <div className="bg-slate-200 p-1 rounded-xl flex shadow-inner">
+                {/* 1. Compact Toolbar (Position Toggle + Settings Button) */}
+                <div className="flex gap-2">
+                    <div className="bg-slate-200 p-1 rounded-xl flex shadow-inner flex-1">
+                        <button 
+                            onClick={() => setActiveSection('header')} 
+                            className={`flex-1 py-2 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1 ${activeSection === 'header' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            <i className="fas fa-arrow-up"></i> PÅ
+                        </button>
+                        <button 
+                            onClick={() => setActiveSection('footer')} 
+                            className={`flex-1 py-2 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1 ${activeSection === 'footer' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        >
+                            <i className="fas fa-arrow-down"></i> UNDER
+                        </button>
+                    </div>
                     <button 
-                        onClick={() => setActiveSection('header')} 
-                        className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${activeSection === 'header' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                        onClick={() => setShowSettings(!showSettings)}
+                        className={`px-4 rounded-xl border transition-all flex items-center justify-center shadow-sm ${showSettings ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50'}`}
+                        title="Inställningar för stil och färg"
                     >
-                        <i className="fas fa-arrow-up"></i>
-                        Text PÅ bilden
-                    </button>
-                    <button 
-                        onClick={() => setActiveSection('footer')} 
-                        className={`flex-1 py-2.5 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${activeSection === 'footer' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                    >
-                        <i className="fas fa-arrow-down"></i>
-                        Text UNDER bilden
+                        <i className="fas fa-sliders-h"></i>
                     </button>
                 </div>
 
-                {/* 2. Main Editor Input */}
-                <div>
-                    <label className="text-[10px] font-black uppercase text-slate-400 mb-2 block tracking-widest pl-1">
-                        {activeSection === 'header' ? 'Innehåll (Rubriker etc)' : 'Innehåll (Brödtext)'}
-                    </label>
-                    <RichTextListEditor 
-                        lines={activeLines || []} 
-                        onChange={setActiveLines} 
-                        onFocusLine={setFocusedLineId} 
-                        focusedLineId={focusedLineId}
-                        placeholder={activeSection === 'header' ? "Skriv rubrik här..." : "Skriv beskrivning här..."}
+                {/* 2. Main Editor Input (Multi-line) */}
+                <div className="relative">
+                    <textarea 
+                        ref={textAreaRef}
+                        rows={2}
+                        value={textValue} 
+                        onChange={(e) => {
+                            handleTextChange(e.target.value);
+                            // Auto-grow height slightly up to a max
+                            e.target.style.height = 'auto';
+                            e.target.style.height = Math.min(e.target.scrollHeight, 200) + 'px';
+                        }} 
+                        className="w-full bg-white border border-slate-300 rounded-xl p-3 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 text-slate-800 transition-all font-serif resize-none shadow-sm text-sm leading-relaxed placeholder:font-sans placeholder:text-slate-400" 
+                        style={{ 
+                            fontWeight: currentConfig.isBold ? 'bold' : 'normal', 
+                            fontStyle: currentConfig.isItalic ? 'italic' : 'normal',
+                            textAlign: currentConfig.alignment
+                        }} 
+                        placeholder={activeSection === 'header' ? "Skriv rubrik eller text på bilden..." : "Skriv din berättelse här..."} 
                     />
+                    <div className="absolute right-2 bottom-2 text-[9px] text-slate-300 font-bold pointer-events-none">
+                        ENTER = Nytt stycke
+                    </div>
                 </div>
 
-                {/* 3. Consolidated Formatting Accordion */}
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-                    <button 
-                        onClick={() => setIsStyleOpen(!isStyleOpen)}
-                        className="w-full px-4 py-3 flex items-center justify-between hover:bg-slate-50 transition-colors bg-white border-b border-slate-100"
-                    >
-                        <div className="flex items-center gap-2">
-                            <div className={`w-6 h-6 rounded bg-indigo-50 flex items-center justify-center text-indigo-600 text-xs transition-transform ${isStyleOpen ? 'rotate-90' : ''}`}>
-                                <i className="fas fa-sliders-h"></i>
-                            </div>
-                            <span className="text-xs font-bold text-slate-700">Stil, Position & Färg mm</span>
-                        </div>
-                        <i className={`fas fa-chevron-down text-slate-300 text-xs transition-transform ${isStyleOpen ? 'rotate-180' : ''}`}></i>
-                    </button>
-                    
-                    {isStyleOpen && (
-                        <div className="p-4 space-y-5 bg-slate-50/30 animate-in slide-in-from-top-2">
+                {/* 3. Expandable Formatting Settings */}
+                {showSettings && (
+                    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm animate-in slide-in-from-top-2 fade-in duration-200">
+                        <div className="p-4 space-y-5 bg-slate-50/30">
                             
                             {/* Basic Formatting Toolbar */}
                             <div>
@@ -262,8 +248,8 @@ const EditorToolsPanel: React.FC<EditorToolsPanelProps> = ({
                             </label>
 
                         </div>
-                    )}
-                </div>
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -276,26 +262,45 @@ const EditorToolsPanel: React.FC<EditorToolsPanelProps> = ({
             </div>
 
             {/* MOBILE BOTTOM SHEET (Fixed on small screens) */}
-            <div className={`lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-50 transition-all duration-300 shadow-[0_-4px_20px_rgba(0,0,0,0.1)] flex flex-col ${isMobileExpanded ? 'h-[85vh] rounded-t-2xl' : 'h-16'}`}>
+            <div className={`lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 z-50 transition-all duration-300 shadow-[0_-4px_20px_rgba(0,0,0,0.1)] flex flex-col ${isMobileExpanded ? 'max-h-[80vh]' : 'h-auto max-h-[50vh]'}`}>
+                
                 {!isMobileExpanded ? (
-                    // COLLAPSED BAR
-                    <div className="flex items-center justify-between px-4 h-full cursor-pointer" onClick={() => setIsMobileExpanded(true)}>
-                         <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600">
-                                <i className="fas fa-pen"></i>
-                            </div>
-                            <div className="flex flex-col">
-                                <span className="text-sm font-bold text-slate-800">Redigera text & stil</span>
-                                <span className="text-[10px] text-slate-500">Tryck för att öppna verktyg</span>
-                            </div>
+                    // COLLAPSED / COMPACT BAR (Default state)
+                    <div className="flex flex-col bg-white w-full rounded-t-2xl shadow-lg">
+                         <div className="flex justify-center p-2" onClick={() => setIsMobileExpanded(true)}>
+                             <div className="w-12 h-1 bg-slate-300 rounded-full cursor-pointer hover:bg-slate-400"></div>
                          </div>
-                         <button className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center text-slate-600">
-                            <i className="fas fa-chevron-up"></i>
-                         </button>
+                         <div className="px-4 pb-4" style={{ height: showSettings ? 'auto' : 'auto' }}>
+                             {/* Re-using render content logic but wrapped for mobile styling */}
+                             <div className="flex gap-2 mb-3">
+                                <div className="bg-slate-100 p-1 rounded-xl flex flex-1">
+                                    <button onClick={() => setActiveSection('header')} className={`flex-1 py-2 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1 ${activeSection === 'header' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}><i className="fas fa-arrow-up"></i> PÅ</button>
+                                    <button onClick={() => setActiveSection('footer')} className={`flex-1 py-2 rounded-lg text-[10px] font-bold transition-all flex items-center justify-center gap-1 ${activeSection === 'footer' ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}><i className="fas fa-arrow-down"></i> UNDER</button>
+                                </div>
+                                <button onClick={() => { setShowSettings(!showSettings); if(!showSettings) setIsMobileExpanded(true); }} className={`px-4 rounded-xl border flex items-center justify-center ${showSettings ? 'bg-indigo-600 text-white' : 'bg-slate-50 border-slate-200 text-slate-500'}`}><i className="fas fa-sliders-h"></i></button>
+                             </div>
+                             
+                             <div className="relative">
+                                <textarea 
+                                    ref={textAreaRef}
+                                    rows={showSettings ? 2 : 3}
+                                    value={textValue}
+                                    onChange={(e) => handleTextChange(e.target.value)}
+                                    onFocus={() => { if(!showSettings) setIsMobileExpanded(true); }} // Expand on focus for better keyboard handling
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 outline-none focus:border-indigo-500 focus:bg-white text-slate-800 text-sm font-serif"
+                                    placeholder="Skriv din text här..."
+                                    style={{ fontWeight: currentConfig.isBold ? 'bold' : 'normal', fontStyle: currentConfig.isItalic ? 'italic' : 'normal', textAlign: currentConfig.alignment }}
+                                />
+                             </div>
+                         </div>
                     </div>
                 ) : (
-                    // EXPANDED DRAWER
-                    <div className="flex flex-col h-full rounded-t-2xl overflow-hidden">
+                    // FULLY EXPANDED DRAWER
+                    <div className="flex flex-col h-full rounded-t-2xl overflow-hidden bg-white">
+                        <div className="flex justify-between items-center p-3 border-b border-slate-100 cursor-pointer bg-slate-50" onClick={() => setIsMobileExpanded(false)}>
+                            <span className="text-xs font-bold text-slate-500 uppercase tracking-wider pl-2">Redigera</span>
+                            <div className="w-8 h-8 flex items-center justify-center bg-white rounded-full text-slate-400 hover:text-slate-600"><i className="fas fa-chevron-down"></i></div>
+                        </div>
                         {renderContent()}
                     </div>
                 )}
