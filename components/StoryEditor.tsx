@@ -1,12 +1,12 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { DriveFile, FileType, TextConfig, RichTextLine, PageMetadata, AppSettings, MemoryBook, CompressionLevel, ChunkData, ExportedFile } from '../types';
-import { generateCombinedPDF, splitPdfIntoPages, mergeFilesToPdf, createPreviewWithOverlay, getPdfPageCount, DEFAULT_TEXT_CONFIG, DEFAULT_FOOTER_CONFIG, getPdfDocument, renderPdfPageToCanvas, extractHighQualityImage, processFileForCache, generatePageThumbnail } from '../services/pdfService';
+import { DriveFile, FileType, AppSettings, MemoryBook, ChunkData, ExportedFile } from '../types';
+import { generateCombinedPDF, splitPdfIntoPages, mergeFilesToPdf, getPdfPageCount, generatePageThumbnail, processFileForCache } from '../services/pdfService';
 import { uploadToDrive, saveProjectState } from '../services/driveService';
 import FamilySearchExport from './FamilySearchExport';
 import AppLogo from './AppLogo';
 import StoryEditorSidebar from './StoryEditorSidebar';
-import EditorToolsPanel from './EditorToolsPanel';
+import FileEditorModal from './FileEditorModal';
 import { CHUNK_THEMES } from './theme';
 
 // --- COMPONENTS ---
@@ -134,226 +134,6 @@ const ListViewItem = ({ item, index, isSelected, onClick, onEdit, chunkInfo, onD
             )}
              <span className="text-xs text-slate-400 font-mono mr-4">{item.size > 0 ? (item.size/1024/1024).toFixed(2) + ' MB' : ''}</span>
             <button onClick={(e) => { e.stopPropagation(); onEdit(); }} className="p-2 text-slate-300 hover:text-indigo-600"><i className="fas fa-pen"></i></button>
-        </div>
-    );
-};
-
-const SidebarThumbnail = ({ pdfDocProxy, pageIndex, item }: { pdfDocProxy: any, pageIndex: number, item?: DriveFile }) => {
-    const canvasRef = useRef<HTMLCanvasElement>(null);
-    useEffect(() => {
-        const render = async () => {
-            if (pdfDocProxy && canvasRef.current) {
-                await renderPdfPageToCanvas(pdfDocProxy, pageIndex + 1, canvasRef.current, 0.25);
-            }
-        };
-        render();
-    }, [pdfDocProxy, pageIndex]);
-
-    return <canvas ref={canvasRef} className="w-full h-full object-contain block" />;
-};
-
-const EditModal = ({ item, accessToken, onClose, onUpdate, settings, driveFolderId, onExportSuccess }: any) => {
-    const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
-    const [pageMeta, setPageMeta] = useState<Record<number, PageMetadata>>(item.pageMeta || {});
-    const [activePageIndex, setActivePageIndex] = useState(0);
-    const [totalPages, setTotalPages] = useState(1);
-    const [activeSection, setActiveSection] = useState<'header' | 'footer'>('header');
-    const [focusedLineId, setFocusedLineId] = useState<string | null>(null);
-    const [errorMsg, setErrorMsg] = useState<string | null>(null);
-    const [pdfDocProxy, setPdfDocProxy] = useState<any>(null);
-    const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-    const mainCanvasRef = useRef<HTMLCanvasElement>(null);
-    const [isLoadingPreview, setIsLoadingPreview] = useState(true);
-    const [isSavingImage, setIsSavingImage] = useState(false);
-    const [isSavingThumbnail, setIsSavingThumbnail] = useState(false);
-
-    useEffect(() => {
-        const init = async () => {
-             setIsLoadingPreview(true); setErrorMsg(null);
-             try {
-                const { buffer } = await processFileForCache(item, accessToken, settings.compressionLevel || 'medium');
-                const isPdfType = item.type === FileType.PDF || item.type === FileType.GOOGLE_DOC;
-                const type = isPdfType ? 'application/pdf' : 'image/jpeg';
-                
-                const sourceBlob = new Blob([buffer as any], { type });
-                const previewUrl = await createPreviewWithOverlay(sourceBlob, item.type, pageMeta);
-                
-                const res = await fetch(previewUrl);
-                const pBlob = await res.blob();
-                setPreviewBlob(pBlob);
-                
-                const pdf = await getPdfDocument(pBlob);
-                setPdfDocProxy(pdf);
-                setTotalPages(pdf.numPages);
-                
-                if (Object.keys(pageMeta).length === 0 && (item.headerText || item.description)) {
-                     const initMeta: PageMetadata = { 
-                         headerLines: item.headerText ? [{ id: 'l1', text: item.headerText, config: item.textConfig || DEFAULT_TEXT_CONFIG }] : [], 
-                         footerLines: item.description ? [{ id: 'f1', text: item.description, config: DEFAULT_FOOTER_CONFIG }] : [], 
-                     };
-                    setPageMeta({ 0: initMeta });
-                }
-             } catch (e: any) { 
-                 console.error("Init failed", e); 
-                 setErrorMsg(e.message || "Kunde inte ladda filen."); 
-             } finally { setIsLoadingPreview(false); }
-        }
-        init();
-    }, []);
-
-    useEffect(() => {
-        const update = async () => {
-            if (!item || errorMsg) return;
-            try {
-                onUpdate({ pageMeta }); 
-                const { buffer } = await processFileForCache(item, accessToken, settings.compressionLevel || 'medium');
-                const isPdfType = item.type === FileType.PDF || item.type === FileType.GOOGLE_DOC;
-                const type = isPdfType ? 'application/pdf' : 'image/jpeg';
-                const sourceBlob = new Blob([buffer as any], { type });
-                const url = await createPreviewWithOverlay(sourceBlob, item.type, pageMeta);
-                const res = await fetch(url);
-                const pBlob = await res.blob();
-                setPreviewBlob(pBlob);
-                const pdf = await getPdfDocument(pBlob);
-                setPdfDocProxy(pdf);
-            } catch(e) { console.error(e); }
-        };
-        const t = setTimeout(update, 500); return () => clearTimeout(t);
-    }, [pageMeta]);
-
-    useEffect(() => {
-        const renderMain = async () => { 
-            if (pdfDocProxy && mainCanvasRef.current) {
-                await renderPdfPageToCanvas(pdfDocProxy, activePageIndex + 1, mainCanvasRef.current, 1.5); 
-            }
-        };
-        renderMain();
-    }, [pdfDocProxy, activePageIndex]);
-
-    const getCurrentMeta = () => pageMeta[activePageIndex] || { headerLines: [], footerLines: [] };
-    const updateCurrentMeta = (updates: Partial<PageMetadata>) => setPageMeta(prev => ({ ...prev, [activePageIndex]: { ...(prev[activePageIndex] || { headerLines: [], footerLines: [] }), ...updates } }));
-    
-    const handleCopyPageToPng = async () => {
-        if (!previewBlob || !driveFolderId) {
-            alert("Kan inte spara bilden (saknar mapp eller data).");
-            return;
-        }
-        const defaultName = `${item.name.replace(/\.[^/.]+$/, "")}_Sida${activePageIndex + 1}.png`;
-        const filename = prompt("Vad ska bilden heta på Google Drive?", defaultName);
-        if (!filename) return;
-
-        setIsSavingImage(true);
-        try { 
-            const pngBlob = await extractHighQualityImage(previewBlob, activePageIndex); 
-            await uploadToDrive(accessToken, driveFolderId, filename, pngBlob, 'image/png');
-            if (onExportSuccess) onExportSuccess(filename, 'png');
-            alert(`Bilden "${filename}" har sparats i bokens mapp på Google Drive.`);
-        } catch (e) { 
-            alert("Kunde inte spara bilden till Drive."); 
-        } finally {
-            setIsSavingImage(false);
-        }
-    };
-
-    const handleSaveAndClose = async () => {
-        setIsSavingThumbnail(true);
-        try {
-            if (previewBlob) {
-               const newThumb = await generatePageThumbnail(previewBlob, 0, 0.5);
-               onUpdate({ thumbnail: newThumb });
-            }
-        } catch(e) { console.warn("Kunde inte uppdatera miniatyrbild", e); } 
-        finally {
-            setIsSavingThumbnail(false);
-            onClose();
-        }
-    };
-
-    const getActiveConfig = () => { const meta = getCurrentMeta(); const lines = activeSection === 'header' ? meta.headerLines : meta.footerLines; const line = lines.find(l => l.id === focusedLineId); return line?.config || (activeSection === 'header' ? DEFAULT_TEXT_CONFIG : DEFAULT_FOOTER_CONFIG); };
-    const updateActiveConfig = (key: keyof TextConfig, value: any) => { const meta = getCurrentMeta(); const isHeader = activeSection === 'header'; const lines = isHeader ? meta.headerLines : meta.footerLines; if (focusedLineId) { const newLines = lines.map(l => l.id === focusedLineId ? { ...l, config: { ...l.config, [key]: value } } : l); updateCurrentMeta(isHeader ? { headerLines: newLines } : { footerLines: newLines }); } else { const newLines = lines.map(l => ({ ...l, config: { ...l.config, [key]: value } })); updateCurrentMeta(isHeader ? { headerLines: newLines } : { footerLines: newLines }); } };
-    const currentConfig = getActiveConfig();
-
-    return (
-        <div className="fixed inset-0 z-[100] bg-slate-900 flex flex-col animate-in fade-in duration-200">
-            {/* Toolbar */}
-            <div className="bg-slate-800 text-white h-14 flex items-center justify-between px-4 border-b border-slate-700 shrink-0 z-50">
-                <div className="flex items-center space-x-4">
-                    {/* Hide sidebar toggle on mobile since sidebar is hidden there */}
-                    <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="text-slate-300 hover:text-white hidden lg:block">
-                        <i className="fas fa-bars text-lg"></i>
-                    </button>
-                    <span className="font-bold text-sm truncate max-w-[200px]">{item.name}</span>
-                </div>
-                <div className="flex items-center space-x-2">
-                    <span className="text-xs text-slate-400 mr-2">{activePageIndex + 1} / {totalPages}</span>
-                    <button onClick={() => setActivePageIndex(Math.max(0, activePageIndex - 1))} disabled={activePageIndex === 0} className="w-8 h-8 rounded hover:bg-slate-700 disabled:opacity-30"><i className="fas fa-chevron-left"></i></button>
-                    <button onClick={() => setActivePageIndex(Math.min(totalPages - 1, activePageIndex + 1))} disabled={activePageIndex === totalPages - 1} className="w-8 h-8 rounded hover:bg-slate-700 disabled:opacity-30"><i className="fas fa-chevron-right"></i></button>
-                </div>
-                <div className="flex items-center space-x-3">
-                    <button onClick={handleCopyPageToPng} disabled={isSavingImage || isSavingThumbnail} className="bg-emerald-600 hover:bg-emerald-500 px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center space-x-2 shadow-lg disabled:opacity-50 hidden sm:flex">
-                        {isSavingImage ? <i className="fas fa-circle-notch fa-spin"></i> : <i className="fas fa-save"></i>}
-                        <span>{isSavingImage ? 'Sparar...' : 'Spara bild'}</span>
-                    </button>
-                    <button onClick={handleSaveAndClose} disabled={isSavingThumbnail} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-1.5 rounded text-xs font-bold transition-colors disabled:opacity-50 flex items-center gap-2">
-                        {isSavingThumbnail && <i className="fas fa-circle-notch fa-spin"></i>}
-                        <span>{isSavingThumbnail ? 'Sparar...' : 'Klar'}</span>
-                    </button>
-                </div>
-            </div>
-            
-            {/* Workspace */}
-            <div className="flex-1 flex overflow-hidden relative">
-                {/* Left Sidebar - Hidden on mobile */}
-                {isSidebarOpen && (
-                    <div className="hidden lg:flex w-48 bg-[#222] border-r border-slate-700 flex-col overflow-y-auto custom-scrollbar shrink-0">
-                        <div className="p-4 space-y-4">
-                            {Array.from({ length: totalPages }).map((_, idx) => (
-                                <div key={idx} onClick={() => setActivePageIndex(idx)} className={`cursor-pointer group relative flex flex-col items-center ${activePageIndex === idx ? 'opacity-100' : 'opacity-60 hover:opacity-100'}`}>
-                                    <div className={`w-full aspect-[210/297] bg-white rounded-sm overflow-hidden relative shadow-sm transition-all ${activePageIndex === idx ? 'ring-2 ring-indigo-500' : ''}`}>
-                                        <SidebarThumbnail pdfDocProxy={pdfDocProxy} pageIndex={idx} item={item} />
-                                    </div>
-                                    <span className="text-[10px] text-slate-400 mt-1">{idx + 1}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
-                
-                {/* Main View */}
-                <div className="flex-1 bg-[#1a1a1a] relative flex items-center justify-center overflow-auto p-4 md:p-8 pb-20 lg:pb-8">
-                     {isLoadingPreview && (
-                         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20 backdrop-blur-sm">
-                             <i className="fas fa-circle-notch fa-spin text-indigo-400 text-4xl mb-4"></i>
-                             <p className="text-white font-bold text-sm">Optimerar för redigering...</p>
-                         </div>
-                     )}
-                     {errorMsg && !isLoadingPreview && (
-                         <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 z-10">
-                             <div className="bg-slate-800 p-8 rounded-2xl max-w-md text-center border border-slate-700">
-                                 <i className="fas fa-exclamation-triangle text-4xl text-amber-500 mb-4"></i>
-                                 <h3 className="text-white font-bold text-lg mb-2">Hoppsan!</h3>
-                                 <p className="text-slate-300 text-sm mb-6">{errorMsg}</p>
-                                 <button onClick={onClose} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 font-bold text-sm">Stäng</button>
-                             </div>
-                         </div>
-                     )}
-                     <div className="shadow-2xl bg-white relative">
-                         <canvas ref={mainCanvasRef} className="block max-w-full max-h-[75vh] md:max-h-[85vh] h-auto w-auto" />
-                     </div>
-                </div>
-                
-                {/* Right Panel: Tools (Modularized) */}
-                <EditorToolsPanel 
-                    activeSection={activeSection}
-                    setActiveSection={setActiveSection}
-                    currentConfig={currentConfig}
-                    updateActiveConfig={updateActiveConfig}
-                    pageMeta={getCurrentMeta()}
-                    updateCurrentMeta={updateCurrentMeta}
-                    focusedLineId={focusedLineId}
-                    setFocusedLineId={setFocusedLineId}
-                />
-            </div>
         </div>
     );
 };
@@ -716,7 +496,17 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       } catch (e) { alert("Kunde inte slå ihop filerna."); console.error(e); } finally { setIsProcessing(false); } 
   };
 
-  const handleUpdateItem = (updates: Partial<DriveFile>) => { if (!editingItem) return; const updated = { ...editingItem, ...updates }; setEditingItem(updated); onUpdateItems(items.map(i => i.id === updated.id ? updated : i)); };
+  const handleUpdateItem = (updates: Partial<DriveFile>) => { 
+      if (!editingItem) return; 
+      const updated = { ...editingItem, ...updates }; 
+      setEditingItem(updated); 
+      onUpdateItems(items.map(i => i.id === updated.id ? updated : i)); 
+  };
+  
+  const handleNavigateFile = (newItem: DriveFile) => {
+      setEditingItem(newItem);
+  };
+
   const handleInsertAfterSelection = () => { const indexes = items.map((item, idx) => selectedIds.has(item.id) ? idx : -1).filter(i => i !== -1); const maxIndex = Math.max(...indexes); if (maxIndex !== -1) onOpenSourceSelector(maxIndex + 1); };
 
   const filteredItems = activeChunkFilter !== null ? (chunks.find(c => c.id === activeChunkFilter)?.items || []) : items;
@@ -803,8 +593,17 @@ const StoryEditor: React.FC<StoryEditorProps> = ({
       </div>
 
       {editingItem && (
-        <EditModal 
-          key={editingItem.id} item={editingItem} accessToken={accessToken} onClose={() => setEditingItem(null)} onUpdate={handleUpdateItem} settings={settings} driveFolderId={currentBook.driveFolderId} onExportSuccess={handleManualExportSuccess} 
+        <FileEditorModal
+            key={editingItem.id} 
+            item={editingItem}
+            allItems={items} // Pass all items to enable navigation
+            accessToken={accessToken} 
+            onClose={() => setEditingItem(null)} 
+            onUpdate={handleUpdateItem} 
+            onNavigateFile={handleNavigateFile}
+            settings={settings} 
+            driveFolderId={currentBook.driveFolderId} 
+            onExportSuccess={handleManualExportSuccess} 
         />
       )}
     </>
