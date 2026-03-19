@@ -5,7 +5,7 @@ export const getAIAssistantResponse = async (files: DriveFile[], prompt: string)
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   const response = await ai.models.generateContent({
-    model: 'gemini-3-pro-preview',
+    model: 'gemini-3.1-pro-preview',
     contents: `Du är en expert på släktforskning och historieberättande med fokus på det mänskliga perspektivet. 
     Här är en lista på filer som representerar någons minnen: 
     ${JSON.stringify(files.map(f => ({ name: f.name, type: f.type, description: f.description })))}
